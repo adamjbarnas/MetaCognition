@@ -1,0 +1,550 @@
+---
+title: "Combined Stimulus Sets Meta-Awareness"
+author: "Adam Barnas"
+#date: '`r Sys.Date()`'
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(lme4)
+library(lmerTest)
+library(irrNA)
+library(psy)
+library(coefficientalpha)
+library(parameters)
+```
+
+# Set the R working drectory to the main experiment directory.
+
+```{r message=FALSE}
+setwd("/Users/adambarnas/Box/MetaAwareness/data/")  
+```
+
+# Read in Attempt 1 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_1", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_1 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_1 <- wolfe2_semantic_final_1 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_1,'wolfe2_descriptions_attempt_1_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 2 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_2", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_2 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_2 <- wolfe2_semantic_final_2 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_2,'wolfe2_descriptions_attempt_2_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 3 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_3", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_3 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_3 <- wolfe2_semantic_final_3 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_3,'wolfe2_descriptions_attempt_3_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 4 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_4", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character", "Cow_a_text"="character", "Cow_b_text"="character","Airplane_a_text"="character", "Airplane_b_text"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_4 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_4 <- wolfe2_semantic_final_4 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_4,'wolfe2_descriptions_attempt_4_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 5 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_5", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character", "Cow_a_text"="character", "Cow_b_text"="character","Airplane_a_text"="character", "Airplane_b_text"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_5 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_5 <- wolfe2_semantic_final_5 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_5,'wolfe2_descriptions_attempt_5_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 6 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_6", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character", "Cow_a_text"="character", "Cow_b_text"="character","Airplane_a_text"="character", "Airplane_b_text"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_6 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_6 <- wolfe2_semantic_final_6 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_6,'wolfe2_descriptions_attempt_6_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 7 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_7", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character", "Cow_a_text"="character", "Cow_b_text"="character","Airplane_a_text"="character", "Airplane_b_text"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_7 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_7 <- wolfe2_semantic_final_7 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_7,'wolfe2_descriptions_attempt_7_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 8 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_8", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character", "Cow_a_text"="character", "Cow_b_text"="character","Airplane_a_text"="character", "Airplane_b_text"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_8 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_8 <- wolfe2_semantic_final_8 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_8,'wolfe2_descriptions_attempt_8_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 9 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_9", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character", "Cow_a_text"="character", "Cow_b_text"="character","Airplane_a_text"="character", "Airplane_b_text"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_9 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_9 <- wolfe2_semantic_final_9 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_9,'wolfe2_descriptions_attempt_9_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 10 data files.
+
+```{r warning=FALSE}
+wolfe2_semantic <- list.files(path = "./Wolfe2_Semantic/Attempt_10", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character", "Cow_a_text"="character", "Cow_b_text"="character","Airplane_a_text"="character", "Airplane_b_text"="character")))
+nrow(wolfe2_semantic %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_semantic_images = subset(wolfe2_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_semantic_images))
+wolfe2_semantic_images <- wolfe2_semantic_images[, c(col_idx, (1:ncol(wolfe2_semantic_images))[-col_idx])]
+wolfe2_semantic_images <- data.frame(na.omit(wolfe2_semantic_images))
+wolfe2_semantic_images <- subset(wolfe2_semantic_images, image_a != "")
+wolfe2_semantic_images <- wolfe2_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_semantic_images$image <- lapply(wolfe2_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(wolfe2_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_images$database <- "wolfe2"
+wolfe2_semantic_images <- wolfe2_semantic_images %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_cow = subset(wolfe2_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_cow))
+wolfe2_semantic_cow <- wolfe2_semantic_cow[, c(col_idx, (1:ncol(wolfe2_semantic_cow))[-col_idx])]
+wolfe2_semantic_cow <- data.frame(na.omit(wolfe2_semantic_cow))
+wolfe2_semantic_cow$database <- "wolfe2"
+wolfe2_semantic_cow$image <- "cow"
+colnames(wolfe2_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_cow <- wolfe2_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+wolfe2_semantic_airplane = subset(wolfe2_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane[, c(col_idx, (1:ncol(wolfe2_semantic_airplane))[-col_idx])]
+wolfe2_semantic_airplane <- data.frame(na.omit(wolfe2_semantic_airplane))
+wolfe2_semantic_airplane$database <- "wolfe2"
+wolfe2_semantic_airplane$image <- "airplane"
+colnames(wolfe2_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+wolfe2_semantic_airplane <- wolfe2_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+wolfe2_semantic_final_10 <- rbind(wolfe2_semantic_images, wolfe2_semantic_cow, wolfe2_semantic_airplane)
+wolfe2_semantic_final_10 <- wolfe2_semantic_final_10 %>% 
+  arrange(workerId)
+write.csv(wolfe2_semantic_final_10,'wolfe2_descriptions_attempt_10_w_catch.csv', row.names=FALSE)
+```
+
+# Combine data files.
+
+```{r}
+wolfe2_semantic_all<- rbind(wolfe2_semantic_final_1, wolfe2_semantic_final_2, wolfe2_semantic_final_3, wolfe2_semantic_final_4, wolfe2_semantic_final_5, wolfe2_semantic_final_6, wolfe2_semantic_final_7, wolfe2_semantic_final_8, wolfe2_semantic_final_9, wolfe2_semantic_final_10)
+wolfe2_semantic_all <- wolfe2_semantic_all %>% 
+  filter(image != 'airplane' & image != 'cow')
+
+wolfe2_semantic_all_count <- wolfe2_semantic_all %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe2_semantic_all_count <- data.frame(count = colSums(wolfe2_semantic_all_count[,2:255], na.rm = TRUE))
+wolfe2_semantic_all_count <- tibble::rownames_to_column(wolfe2_semantic_all_count, "image")
+wolfe2_semantic_all_count
+```
+
+# Filter good subjects.
+
+```{r message=FALSE}
+wolfe2_semantic_good <- read_csv("wolfe2_Semantic_good.csv")
+wolfe2_semantic_final_descriptions <- wolfe2_semantic_all %>% 
+      filter(wolfe2_semantic_all$workerId %in% wolfe2_semantic_good$workerId)
+nrow(wolfe2_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE))
+
+wolfe2_semantic_final_descriptions_count <- wolfe2_semantic_final_descriptions %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe2_semantic_final_descriptions_count <- data.frame(count = colSums(wolfe2_semantic_final_descriptions_count[,2:255], na.rm = TRUE))
+wolfe2_semantic_final_descriptions_count <- tibble::rownames_to_column(wolfe2_semantic_final_descriptions_count, "image")
+wolfe2_semantic_final_descriptions_count
+wolfe2_semantic_final_descriptions_count <- wolfe2_semantic_final_descriptions_count %>% 
+  arrange(count)
+wolfe2_semantic_final_descriptions_count
+wolfe2_semantic_final_descriptions_count$stim_set <- "wolfe2"
+write.csv(wolfe2_semantic_final_descriptions_count, 'wolfe2_semantic_final_descriptions_count.csv', row.names=FALSE)
+
+wolfe2_semantic_final_descriptions <- wolfe2_semantic_final_descriptions[, -c(1,2)]
+wolfe2_semantic_final_descriptions <- wolfe2_semantic_final_descriptions %>% 
+  arrange(image)
+wolfe2_semantic_final_descriptions$number <- ave(wolfe2_semantic_final_descriptions$image_1_text, wolfe2_semantic_final_descriptions$image, FUN = seq_along)
+write.csv(wolfe2_semantic_final_descriptions,'wolfe2_semantic_final_descriptions.csv', row.names=FALSE)
+```

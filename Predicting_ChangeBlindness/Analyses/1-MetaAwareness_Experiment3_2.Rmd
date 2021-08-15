@@ -1,0 +1,592 @@
+---
+title: "MetaAwarness - Experiment 3 - Task 2"
+author: "Adam Barnas"
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(lme4)
+library(lmerTest)
+library(irrNA)
+library(psy)
+library(coefficientalpha)
+library(parameters)
+library(dplyr)
+```
+
+# Similarity of descriptions.
+
+## Rensink.
+
+### Read-in datafiles.
+
+```{r warning=FALSE}
+rensink_similarity <- list.files(path = "/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Rensink/Semantic_similarity_ratings", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+```
+
+Count initial sample of subjects.
+
+```{r}
+nrow(rensink_similarity %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Analyze catch trials.
+
+```{r}
+rensink_similarity_bad <- rensink_similarity %>% 
+  group_by(workerId) %>% 
+  filter(any(catch_same_resp.keys != 6))
+nrow(rensink_similarity_bad %>% distinct(workerId,.keep_all = FALSE))
+
+rensink_similarity_good <- rensink_similarity %>% 
+  group_by(workerId) %>% 
+  filter(any(catch_same_resp.keys == 6))
+nrow(rensink_similarity_good %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Some dataframe manipulation.
+
+```{r}
+rensink_similarity_images = subset(rensink_similarity_good, select = c(user_resp.keys,database,image,number,workerId))
+col_idx <- grep("workerId", names(rensink_similarity_images))
+rensink_similarity_images <- rensink_similarity_images[, c(col_idx, (1:ncol(rensink_similarity_images))[-col_idx])]
+colnames(rensink_similarity_images) <- c("workerId", "similarity_rating", "database", "image", "number")
+rensink_similarity_images <- data.frame(na.omit(rensink_similarity_images))
+rensink_similarity_images <- rensink_similarity_images %>%  
+    mutate(image = as.character(image))
+```
+
+### Count the number of ratings for each image.
+
+```{r}
+rensink_similarity_images_count <- rensink_similarity_images %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+rensink_similarity_images_count <- data.frame(count = colSums(rensink_similarity_images_count[,2:49], na.rm = TRUE))
+rensink_similarity_images_count <- tibble::rownames_to_column(rensink_similarity_images_count, "image")
+rensink_similarity_images_count
+```
+
+### Average number of ratings for each image.
+
+```{r}
+mean(rensink_similarity_images_count$count)
+sd(rensink_similarity_images_count$count)
+range(rensink_similarity_images_count$count)
+```
+
+### Average similarity rating for each image.
+
+```{r}
+rensink_similarity_images_average <- rensink_similarity_images %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(average = mean(similarity_rating)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+
+rensink_similarity_images_average <- data.frame(semantic_similarity = colMeans(rensink_similarity_images_average[,2:49], na.rm = TRUE))
+rensink_similarity_images_average <- tibble::rownames_to_column(rensink_similarity_images_average, "image")
+rensink_similarity_images_average
+```
+
+### Count the number of ratings for each set of descriptions.
+
+```{r}
+rensink_similarity_images$x <- paste0(rensink_similarity_images$image,"_",rensink_similarity_images$number)
+rensink_similarity_descriptions_count <- rensink_similarity_images %>% 
+  group_by(workerId,x) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(x,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = FALSE))
+
+rensink_similarity_descriptions_count <- data.frame(count = colSums(rensink_similarity_descriptions_count[,2:301], na.rm = TRUE))
+rensink_similarity_descriptions_count <- tibble::rownames_to_column(rensink_similarity_descriptions_count, "description")
+rensink_similarity_descriptions_count
+```
+
+### Average number of ratings for each pair of descriptions
+
+```{r}
+rensink_similarity_descriptions_average <- rensink_similarity_images %>%
+  group_by(workerId,x) %>%
+  dplyr::summarize(average = mean(similarity_rating)) %>%
+  spread(x,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(rensink_similarity_descriptions_average$subj_avg)
+sd(rensink_similarity_descriptions_average$subj_avg)
+range(rensink_similarity_descriptions_average$subj_avg)
+```
+
+### Average similarity rating for each set of descriptions.
+
+```{r}
+rensink_similarity_descriptions_average <- data.frame(semantic_similarity = colMeans(rensink_similarity_descriptions_average[,2:301], na.rm = TRUE))
+rensink_similarity_descriptions_average <- tibble::rownames_to_column(rensink_similarity_descriptions_average, "image")
+rensink_similarity_descriptions_average
+```
+
+## Ma.
+
+### Read-in datafiles.
+
+```{r warning=FALSE}
+ma_similarity <- list.files(path = "/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Ma/Semantic_similarity_ratings", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+```
+
+Count initial sample of subjects.
+
+```{r}
+nrow(ma_similarity %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Analyze catch trials.
+
+```{r}
+ma_similarity_bad <- ma_similarity %>% 
+  group_by(workerId) %>% 
+  filter(any(catch_same_resp.keys != 6))
+nrow(ma_similarity_bad %>% distinct(workerId,.keep_all = FALSE))
+
+ma_similarity_good <- ma_similarity %>% 
+  group_by(workerId) %>% 
+  filter(any(catch_same_resp.keys == 6))
+nrow(ma_similarity_good %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Some dataframe manipulation.
+
+```{r}
+ma_similarity_images = subset(ma_similarity_good, select = c(user_resp.keys,database,image,number,workerId))
+col_idx <- grep("workerId", names(ma_similarity_images))
+ma_similarity_images <- ma_similarity_images[, c(col_idx, (1:ncol(ma_similarity_images))[-col_idx])]
+colnames(ma_similarity_images) <- c("workerId", "similarity_rating", "database", "image", "number")
+ma_similarity_images <- data.frame(na.omit(ma_similarity_images))
+ma_similarity_images <- ma_similarity_images %>%  
+    mutate(image = as.character(image))
+```
+
+### Count the number of ratings for each image.
+
+```{r}
+ma_similarity_images_count <- ma_similarity_images %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+ma_similarity_images_count <- data.frame(count = colSums(ma_similarity_images_count[,2:70], na.rm = TRUE))
+ma_similarity_images_count <- tibble::rownames_to_column(ma_similarity_images_count, "image")
+ma_similarity_images_count
+```
+
+### Average number of ratings for each image.
+
+```{r}
+mean(ma_similarity_images_count$count)
+sd(ma_similarity_images_count$count)
+range(ma_similarity_images_count$count)
+```
+
+### Average similarity rating for each image.
+
+```{r}
+ma_similarity_images_average <- ma_similarity_images %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(average = mean(similarity_rating)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+
+ma_similarity_images_average <- data.frame(semantic_similarity = colMeans(ma_similarity_images_average[,2:70], na.rm = TRUE))
+ma_similarity_images_average <- tibble::rownames_to_column(ma_similarity_images_average, "image")
+ma_similarity_images_average
+```
+
+### Count the number of ratings for each set of descriptions.
+
+```{r}
+ma_similarity_images$x <- paste0(ma_similarity_images$image,"_",ma_similarity_images$number)
+ma_similarity_descriptions_count <- ma_similarity_images %>% 
+  group_by(workerId,x) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(x,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = FALSE))
+
+ma_similarity_descriptions_count <- data.frame(count = colSums(ma_similarity_descriptions_count[,2:517], na.rm = TRUE))
+ma_similarity_descriptions_count <- tibble::rownames_to_column(ma_similarity_descriptions_count, "description")
+ma_similarity_descriptions_count
+```
+
+### Average number of ratings for each pair of descriptions
+
+```{r}
+ma_similarity_descriptions_average <- ma_similarity_images %>%
+  group_by(workerId,x) %>%
+  dplyr::summarize(average = mean(similarity_rating)) %>%
+  spread(x,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(ma_similarity_descriptions_average$subj_avg)
+sd(ma_similarity_descriptions_average$subj_avg)
+range(ma_similarity_descriptions_average$subj_avg)
+```
+
+### Average similarity rating for each set of descriptions.
+
+```{r}
+ma_similarity_descriptions_average <- data.frame(semantic_similarity = colMeans(ma_similarity_descriptions_average[,2:517], na.rm = TRUE))
+ma_similarity_descriptions_average <- tibble::rownames_to_column(ma_similarity_descriptions_average, "image")
+ma_similarity_descriptions_average
+```
+
+## Wolfe1.
+
+### Read-in datafiles.
+
+```{r warning=FALSE}
+wolfe1_similarity <- list.files(path = "/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe1/Semantic_similarity_ratings", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+```
+
+Count initial sample of subjects.
+
+```{r}
+nrow(wolfe1_similarity %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Analyze catch trials.
+
+```{r}
+wolfe1_similarity_bad <- wolfe1_similarity %>% 
+  group_by(workerId) %>% 
+  filter(any(catch_same_resp.keys != 6))
+nrow(wolfe1_similarity_bad %>% distinct(workerId,.keep_all = FALSE))
+
+wolfe1_similarity_good <- wolfe1_similarity %>% 
+  group_by(workerId) %>% 
+  filter(any(catch_same_resp.keys == 6))
+nrow(wolfe1_similarity_good %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Some dataframe manipulation.
+
+```{r}
+wolfe1_similarity_images = subset(wolfe1_similarity_good, select = c(user_resp.keys,database,image,number,workerId))
+col_idx <- grep("workerId", names(wolfe1_similarity_images))
+wolfe1_similarity_images <- wolfe1_similarity_images[, c(col_idx, (1:ncol(wolfe1_similarity_images))[-col_idx])]
+colnames(wolfe1_similarity_images) <- c("workerId", "similarity_rating", "database", "image", "number")
+wolfe1_similarity_images <- data.frame(na.omit(wolfe1_similarity_images))
+wolfe1_similarity_images <- wolfe1_similarity_images %>%  
+    mutate(image = as.character(image))
+```
+
+### Count the number of ratings for each image.
+
+```{r}
+wolfe1_similarity_images_count <- wolfe1_similarity_images %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe1_similarity_images_count <- data.frame(count = colSums(wolfe1_similarity_images_count[,2:112], na.rm = TRUE))
+wolfe1_similarity_images_count <- tibble::rownames_to_column(wolfe1_similarity_images_count, "image")
+wolfe1_similarity_images_count
+```
+
+### Average number of ratings for each image.
+
+```{r}
+mean(wolfe1_similarity_images_count$count)
+sd(wolfe1_similarity_images_count$count)
+range(wolfe1_similarity_images_count$count)
+```
+
+### Average similarity rating for each image.
+
+```{r}
+wolfe1_similarity_images_average <- wolfe1_similarity_images %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(average = mean(similarity_rating)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+
+wolfe1_similarity_images_average <- data.frame(semantic_similarity = colMeans(wolfe1_similarity_images_average[,2:112], na.rm = TRUE))
+wolfe1_similarity_images_average <- tibble::rownames_to_column(wolfe1_similarity_images_average, "image")
+wolfe1_similarity_images_average
+```
+
+### Count the number of ratings for each set of descriptions.
+
+```{r}
+wolfe1_similarity_images$x <- paste0(wolfe1_similarity_images$image,"_",wolfe1_similarity_images$number)
+wolfe1_similarity_descriptions_count <- wolfe1_similarity_images %>% 
+  group_by(workerId,x) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(x,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = FALSE))
+
+wolfe1_similarity_descriptions_count <- data.frame(count = colSums(wolfe1_similarity_descriptions_count[,2:637], na.rm = TRUE))
+wolfe1_similarity_descriptions_count <- tibble::rownames_to_column(wolfe1_similarity_descriptions_count, "description")
+wolfe1_similarity_descriptions_count
+```
+
+### Average number of ratings for each pair of descriptions
+
+```{r}
+wolfe1_similarity_descriptions_average <- wolfe1_similarity_images %>%
+  group_by(workerId,x) %>%
+  dplyr::summarize(average = mean(similarity_rating)) %>%
+  spread(x,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(wolfe1_similarity_descriptions_average$subj_avg)
+sd(wolfe1_similarity_descriptions_average$subj_avg)
+range(wolfe1_similarity_descriptions_average$subj_avg)
+```
+
+### Average similarity rating for each set of descriptions.
+
+```{r}
+wolfe1_similarity_descriptions_average <- data.frame(semantic_similarity = colMeans(wolfe1_similarity_descriptions_average[,2:637], na.rm = TRUE))
+wolfe1_similarity_descriptions_average <- tibble::rownames_to_column(wolfe1_similarity_descriptions_average, "image")
+wolfe1_similarity_descriptions_average
+```
+
+## Wolfe2.
+
+### Read-in datafiles.
+
+```{r warning=FALSE}
+wolfe2_similarity <- list.files(path = "/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Semantic_similarity_ratings", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+```
+
+Count initial sample of subjects.
+
+```{r}
+nrow(wolfe2_similarity %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Analyze catch trials.
+
+```{r}
+wolfe2_similarity_bad <- wolfe2_similarity %>% 
+  group_by(workerId) %>% 
+  filter(any(catch_same_resp.keys != 6))
+nrow(wolfe2_similarity_bad %>% distinct(workerId,.keep_all = FALSE))
+
+wolfe2_similarity_good <- wolfe2_similarity %>% 
+  group_by(workerId) %>% 
+  filter(any(catch_same_resp.keys == 6))
+nrow(wolfe2_similarity_good %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Some dataframe manipulation.
+
+```{r}
+wolfe2_similarity_images = subset(wolfe2_similarity_good, select = c(user_resp.keys,database,image,number,workerId))
+col_idx <- grep("workerId", names(wolfe2_similarity_images))
+wolfe2_similarity_images <- wolfe2_similarity_images[, c(col_idx, (1:ncol(wolfe2_similarity_images))[-col_idx])]
+colnames(wolfe2_similarity_images) <- c("workerId", "similarity_rating", "database", "image", "number")
+wolfe2_similarity_images <- data.frame(na.omit(wolfe2_similarity_images))
+wolfe2_similarity_images <- wolfe2_similarity_images %>%  
+    mutate(image = as.character(image))
+```
+
+### Count the number of ratings for each image.
+
+```{r}
+wolfe2_similarity_images_count <- wolfe2_similarity_images %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe2_similarity_images_count <- data.frame(count = colSums(wolfe2_similarity_images_count[,2:255], na.rm = TRUE))
+wolfe2_similarity_images_count <- tibble::rownames_to_column(wolfe2_similarity_images_count, "image")
+wolfe2_similarity_images_count
+```
+
+### Average number of ratings for each image.
+
+```{r}
+mean(wolfe2_similarity_images_count$count)
+sd(wolfe2_similarity_images_count$count)
+range(wolfe2_similarity_images_count$count)
+```
+
+### Average similarity rating for each image.
+
+```{r}
+wolfe2_similarity_images_average <- wolfe2_similarity_images %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(average = mean(similarity_rating)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+
+wolfe2_similarity_images_average <- data.frame(semantic_similarity = colMeans(wolfe2_similarity_images_average[,2:255], na.rm = TRUE))
+wolfe2_similarity_images_average <- tibble::rownames_to_column(wolfe2_similarity_images_average, "image")
+wolfe2_similarity_images_average
+```
+
+### Count the number of ratings for each set of descriptions.
+
+```{r}
+wolfe2_similarity_images$x <- paste0(wolfe2_similarity_images$image,"_",wolfe2_similarity_images$number)
+wolfe2_similarity_descriptions_count <- wolfe2_similarity_images %>% 
+  group_by(workerId,x) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(x,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = FALSE))
+
+wolfe2_similarity_descriptions_count <- data.frame(count = colSums(wolfe2_similarity_descriptions_count[,2:1240], na.rm = TRUE))
+wolfe2_similarity_descriptions_count <- tibble::rownames_to_column(wolfe2_similarity_descriptions_count, "description")
+wolfe2_similarity_descriptions_count
+```
+
+### Average number of ratings for each pair of descriptions
+
+```{r}
+wolfe2_similarity_descriptions_average <- wolfe2_similarity_images %>%
+  group_by(workerId,x) %>%
+  dplyr::summarize(average = mean(similarity_rating)) %>%
+  spread(x,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(wolfe2_similarity_descriptions_average$subj_avg)
+sd(wolfe2_similarity_descriptions_average$subj_avg)
+range(wolfe2_similarity_descriptions_average$subj_avg)
+```
+
+### Average similarity rating for each set of descriptions.
+
+```{r}
+wolfe2_similarity_descriptions_average <- data.frame(semantic_similarity = colMeans(wolfe2_similarity_descriptions_average[,2:1240], na.rm = TRUE))
+wolfe2_similarity_descriptions_average <- tibble::rownames_to_column(wolfe2_similarity_descriptions_average, "image")
+wolfe2_similarity_descriptions_average
+```
+
+## Combined analyses.
+
+Count initial sample of subjects.
+
+```{r}
+nrow(rensink_similarity %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_similarity %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_similarity %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_similarity %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Count bad subjects.
+
+```{r}
+nrow(rensink_similarity_bad %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_similarity_bad %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_similarity_bad %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_similarity_bad %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Count good subjects.
+
+```{r}
+nrow(rensink_similarity_good %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_similarity_good %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_similarity_good %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_similarity_good %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Average number of ratings per description.
+
+```{r}
+similarity_descriptions_count <- rbind(rensink_similarity_descriptions_count, ma_similarity_descriptions_count, wolfe1_similarity_descriptions_count, wolfe2_similarity_descriptions_count)
+
+mean(similarity_descriptions_count$count)
+sd(similarity_descriptions_count$count)
+range(similarity_descriptions_count$count)
+```
+
+Average similarity for each description.
+
+```{r}
+similarity_descriptions_average <- rbind(rensink_similarity_descriptions_average, ma_similarity_descriptions_average, wolfe1_similarity_descriptions_average, wolfe2_similarity_descriptions_average)
+
+mean(similarity_descriptions_average$semantic_similarity)
+sd(similarity_descriptions_average$semantic_similarity)
+range(similarity_descriptions_average$semantic_similarity)
+```
+
+Average number of ratings per image.
+
+```{r}
+similarity_images_count <- rbind(rensink_similarity_images_count, ma_similarity_images_count, wolfe1_similarity_images_count, wolfe2_similarity_images_count)
+
+mean(similarity_images_count$count)
+sd(similarity_images_count$count)
+range(similarity_images_count$count)
+```
+
+Average similarity for each image.
+
+```{r}
+similarity_images_average <- rbind(rensink_similarity_images_average, ma_similarity_images_average, wolfe1_similarity_images_average, wolfe2_similarity_images_average)
+
+mean(similarity_images_average$semantic_similarity)
+sd(similarity_images_average$semantic_similarity)
+range(similarity_images_average$semantic_similarity)
+```
+
+Add similarity rating to main data frame.
+
+```{r}
+return_new<- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/return_new.csv", col_types = cols())
+
+return_new <- left_join(return_new, similarity_images_average, by = "image")
+
+return_only <- return_new %>% 
+  filter(group == "Judged by returning")
+```
+
+# Results #5
+
+```{r message=FALSE, warning=FALSE}
+result_5 <- lmer(scale(likelihood_rating) ~ scale(semantic_similarity) + (1 | workerId) + (1 | image) + (1 | stim_set), data=return_only)
+summary(result_5)
+ci(result_5)
+
+return_new_plot <- return_new %>% 
+  group_by(image) %>% 
+  dplyr::summarize(log_rt = mean(log_rt), eccentricity = mean(eccentricity), box_percent = mean(box_percent), change_percent = mean(change_percent), likelihood_rating = mean(likelihood_rating), semantic_similarity = mean(semantic_similarity))
+
+return_new_plot %>%
+  ggscatter(y = "likelihood_rating", x = "semantic_similarity", ylab = "Likelihood of Detecting Change", xlab = "Similarity of Descriptions", xlim = c(2,6), add = "reg.line", conf.int = TRUE, color = "#444B6E", alpha = 0.75, size = 4) + font("xylab", size = 20, family = "Helvetica") + font("xy.text", size = 16, family = "Helvetica") + theme(aspect.ratio=1)
+ggsave("MS_fig_5a.jpg")
+```
+
+```{r message=FALSE, warning=FALSE}
+result_6 <- lmer(scale(log_rt) ~ scale(semantic_similarity) + scale(likelihood_rating) + scale(eccentricity) + scale(change_percent) + (1 | workerId) + (1 | image) + (1 | stim_set), data=return_only)
+summary(result_6)
+ci(result_6)
+
+matrix_coef <- data.frame(summary(result_6)$coefficients)
+matrix_coef 
+matrix_coef = matrix_coef[-1,]
+matrix_coef <- data.frame("Effect"=rownames(matrix_coef), matrix_coef)
+
+matrix_coef %>% 
+  ggbarplot(y = "Estimate", x = "Effect", order = c("scale(likelihood_rating)", "scale(change_percent)", "scale(semantic_similarity)"), fill = "#9AB87A", xlab = "Fixed Effect", ylab = "Standardized Regression Estimate", ylim = c(-.12, .12), lab.pos = "out", lab.vjust = c(4, -1, 10.2, -1), label = c("Similarity", "Difficulty", "Eccentricity", "Size"), width = 0.5, lab.size = 4) + geom_hline(yintercept=0) + theme(axis.text.x = element_blank(), axis.ticks = element_blank())  + font("xylab", size = 19, family = "Helvetica") + font("y.text", size = 16, family = "Helvetica") + theme(aspect.ratio=4/3) + geom_errorbar(aes(ymin = Estimate - Std..Error, ymax = Estimate + Std..Error), width=0.3)
+ggsave("MS_fig_5b.jpg")
+```

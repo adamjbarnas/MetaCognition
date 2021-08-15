@@ -1,0 +1,323 @@
+---
+title: "Ma Mudsplash"
+author: "Adam Barnas"
+#date: '`r Sys.Date()`'
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(EBImage)
+```
+
+Set the R working drectory to the main experiment directory.
+
+```{r message=FALSE}
+setwd("/Users/adambarnas/Box/Mudsplash/Results")  
+```
+
+# Format & manipulate raw data files
+
+## Read-in datafiles
+
+First, read in the individual subject files (saved automatically on the server as csv files).
+
+```{r message=FALSE}
+tbl_all <- list.files(path = "./Ma_data/", pattern = "*.csv", full.names = T) %>%
+  map_df(~read_csv(.))
+tbl_all <- data.frame(tbl_all)
+#head(tbl_all,10)
+```
+
+Get a count of the number of subjects.
+
+``` {r}
+nrow(tbl_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Next, rename the catch trials to the same convention as the main trials and break apart the ``unmod_image`` column into database (the lab where the stims come from) and image (the name of the image file).
+
+```{r warning=FALSE}
+tbl_all$unmod_image[tbl_all$unmod_image == "catchAirplane-a"] <- "rensink_catchAirplane-a"
+tbl_all$unmod_image[tbl_all$unmod_image == "catchBoat-a"] <- "rensink_catchBoat-a"
+tbl_all$unmod_image[tbl_all$unmod_image == "catchCow-a"] <- "rensink_catchCow-a"
+tbl_all <- tbl_all %>%
+separate(unmod_image,into=c('database', 'image', NA), sep = "([\\_\\-])")
+#head(tbl_all,10)
+```
+
+Let's, for now, also assign the trials to bins based on the trial number. The 2 practice trials at the beginning and the 1 catch trial at the end will be labeled "filler".
+
+```{r}
+tbl_all$bin = "filler"
+tbl_all[which(tbl_all$trial_number %in% c(3:8)), "bin"] = "block_1"
+tbl_all[which(tbl_all$trial_number %in% c(9:14)), "bin"] = "block_2"
+tbl_all[which(tbl_all$trial_number %in% c(15:20)), "bin"] = "block_3"
+tbl_all[which(tbl_all$trial_number %in% c(21:26)), "bin"] = "block_4"
+tbl_all[which(tbl_all$trial_number %in% c(27:32)), "bin"] = "block_5"
+```
+
+Get the total number of trials for each subject and the initial count for each image.
+
+``` {r}
+tbl_all_counts <- tbl_all %>%
+  group_by(workerId,image) %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow") %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+image_count_initial <- data.frame(image_count = colSums(tbl_all_counts[,2:70], na.rm = TRUE))
+knitr::kable(image_count_initial)
+```  
+
+The data are loaded. Let's move on and examine the quality of the data.
+
+## Analyze accuracy
+
+In this chunk, every click for a given image is compared to the image difference hull. The process involves the addition of two arrays - the difference hull array and an array created by the script and the subject's click. The difference hull array is composed of 0s and 1s, with 1s corresponding to the changing object. An equally sized array of all 0s is composed, with one 1 corresponding to the X,Y coordinates of the click. These two arrays are added together and the maximum value is queried. A maximum value of 2 indicates that the click occurred within the boundaries of the image difference hall (an accurate click). A values less than 2 indicates that the click occurred outside the boundaries of the image difference hall (an inaccurate click). In the new click_ACC column, 1s correspond to accurate clicks and 0s correspond to inaccurate clicks. This will analyze the accuracy for the 2 practice images, all main images, and the 1 catch image.
+
+```{r}
+img_train <- list.files(path = "/Users/adambarnas/Box/Mudsplash/Boxes_Ma/", pattern = ".png", all.files = TRUE,full.names = TRUE,no.. = TRUE)
+img_array <- readPNG(img_train)
+img_list <- lapply(img_train, readPNG)
+img_names <- row.names(image_count_initial)
+img_names <- c("catchAirplane", "catchBoat", "catchCow", img_names)
+names(img_list) = img_names
+
+tbl_all$x[tbl_all$x == "0"] <- 1
+tbl_all$y[tbl_all$y == "0"] <- 1
+
+tbl_all$click_ACC= "filler"
+
+for (i in 1:length(tbl_all$workerId)){
+  img <- data.frame(img_list[tbl_all$image[i]])
+  blank <- data.frame(array(c(0,0), dim = c(nrow(img),ncol(img))))
+  blank[tbl_all$y[i], tbl_all$x[i]] <- 1
+  combo <- img + blank
+  which(combo==2, arr.ind=TRUE)
+  if (max(combo, na.rm=TRUE) == 2){
+    tbl_all$click_ACC[i] = 1
+  } else {
+    tbl_all$click_ACC[i] = 0
+  }
+} 
+```
+
+### Catch trials
+
+Check the accuracy of the catch trial. As a reminder, the catch trial was a large, salient changing object. If a subject did not click on the changing object during the catch trial, their performance on the main trials is likely poor and will be excluded. This chunk will filter the data by accuracy for both inaccurate (bad) catch trials and accurate (good) catch trials and save new dataframes. This chunk will also provide the number and workerIds for inaccurate and accurate catch trial performance. 
+
+```{r}
+tbl_all_catch_acc <- tbl_all %>%
+  filter(image == "catchCow")
+tbl_bad_catch_acc <- tbl_all_catch_acc %>%
+  filter(click_ACC == 0)
+tbl_good_catch_acc <- tbl_all_catch_acc %>%
+  filter(click_ACC == 1)
+
+tbl_bad_catch_acc <- tbl_all[(tbl_all$workerId %in% tbl_bad_catch_acc$workerId),]
+nrow(tbl_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+tbl_good_catch_acc <- tbl_all[(tbl_all$workerId %in% tbl_good_catch_acc$workerId),]
+nrow(tbl_good_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Main trials
+
+Now, check the accuracy of the clicks for the main images. This chunk will compute the total number of inaccurate and accurate clicks for each subject.
+
+```{r}
+tbl_good_catch_acc_all_main_acc <- tbl_good_catch_acc %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow")
+tbl_good_catch_acc_all_main_acc_counts <- tbl_good_catch_acc_all_main_acc %>%
+  group_by(workerId,click_ACC) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(click_ACC,counts) %>%
+  mutate(total = rowSums(.[2:3], na.rm = TRUE))
+colnames(tbl_good_catch_acc_all_main_acc_counts) <- c("workerId", "inacc", "acc", "total")
+```
+
+Here, we can plot the overall accuracy of the main trial clicks for the group. 
+
+```{r}
+tbl_good_catch_acc_all_main_acc_rate <- (tbl_good_catch_acc_all_main_acc_counts$acc / tbl_good_catch_acc_all_main_acc_counts$total)
+tbl_good_catch_acc_all_main_acc_rate <- cbind.data.frame(tbl_good_catch_acc_all_main_acc_counts[,1], tbl_good_catch_acc_all_main_acc_rate)
+colnames(tbl_good_catch_acc_all_main_acc_rate) <- c("workerId", "acc_rate")
+tbl_good_catch_acc_all_main_acc_rate[is.na(tbl_good_catch_acc_all_main_acc_rate)] <- 0
+
+
+tbl_good_catch_acc_all_main_acc_rate %>% 
+  ggbarplot(y = "acc_rate", ylab = "Accuracy", fill = "#f7a800", color = "#f7a800", add = "mean_se", ylim = c(0, 1), xlab = "Group", width = 0.5, label = TRUE, lab.nb.digits = 2, lab.vjust = -1.6, title = "Main Trial Accuracy for All Subjects")
+
+tbl_good_catch_acc_all_main_acc_rate %>% 
+  ggbarplot(x = "workerId", y = "acc_rate", ylab = "Accuracy", fill = "#f7a800", color = "#f7a800", ylim = c(0, 1), title = "Main Trial Accuracy for Individual Subjects", font.xtickslab = 8, sort.val = c("asc")) + rotate_x_text()
+```
+
+Count the number of subjects and only remove inaccurate trials.
+
+```{r}
+nrow(tbl_good_catch_acc_all_main_acc %>% distinct(workerId,.keep_all = FALSE))
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed <- tbl_good_catch_acc_all_main_acc %>% 
+  filter(click_ACC == 1)
+```
+
+## Remove outlier trials
+
+Next, we can remove outlier RTs that are more than 3 SDs away from the mean. 
+
+Let's get the number of trials. This is the initial number of trials.
+
+``` {r}
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_counts <- tbl_good_catch_acc_all_main_acc_inacc_trials_removed %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_counts,10)
+``` 
+
+Before the data are trimmed, let's generate histograms of all RTs and the mean RT of each subject
+
+```{r}
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s = tbl_good_catch_acc_all_main_acc_inacc_trials_removed$rt/1000
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed %>%
+  gghistogram(x = "rt_s", fill = "#f7a800", rug = TRUE, bins = 60, xlim = c(0,60), ylim = c(0,500), xlab = ("Detection RT (sec)"), title = "All RTs")
+
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_mean_subj_RT <- tbl_good_catch_acc_all_main_acc_inacc_trials_removed %>%
+  group_by(workerId) %>%
+  dplyr::summarize(mean_rt = mean(rt_s, na.rm=TRUE))
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_mean_subj_RT %>%
+  gghistogram(x = "mean_rt", fill = "#f7a800", rug = TRUE, bins = 20, xlim = c(0,20), ylim = c(0,10), xlab = ("Mean Detection RT (sec)"), title = "Subject Mean RT")
+```
+
+Trial timer maxed out at 60 sec. Any RTs recorded as 60 sec should be discarded.
+
+```{r}
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed <- tbl_good_catch_acc_all_main_acc_inacc_trials_removed %>% 
+  filter(rt < 60000)
+```
+
+Next, data are inspected for RT outliers. Two additional columns are added to the data table. First, an "outliers" column is added that labels an RT as an outlier or not (0 = not an outlier, 1 = an outlier less than 3 SDs, 2 = an outlier greater than 3 SDs). Second, a "removed_RT" column is added that contains non-outlier RTs.
+
+Note: code can be changed to allow for replacement of outliers with the cutoff values.
+
+```{r}
+correct.trials <- tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed[tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed$click_ACC == "1",]
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed <- ddply(correct.trials, .(workerId), function(x){
+  m <- mean(x$rt)
+  s <- sd(x$rt)
+  upper <- m + 3*s #change 3 with another number to increase or decrease cutoff criteria
+  lower <- m - 3*s #change 3 with another number to increase or decrease cutoff criteria
+
+  x$outliers <- 0
+  x$outliers[x$rt > upper] <- 2
+  x$outliers[x$rt < lower] <- 1
+  x$removed_RT <- x$rt
+  x$removed_RT[x$rt > upper]<- NA #change NA with upper to replace an outlier with the upper cutoff
+  x$removed_RT[x$rt < lower]<- NA #change NA with lower to replace an outlier with the lower cutoff
+  
+  x
+})
+#head(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed,10)
+```
+
+Next, let's completely toss out the outlier trials (labeled as NA).
+
+```{r}
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed <- tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed[!is.na(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed$removed_RT),]
+#head(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed,10)
+```
+
+Let's get the number of trials. This is the number of trials that "survive" the data trimming.
+
+``` {r}
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts <- tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts,10)
+``` 
+
+Here are new histograms of all RTs and the mean RT of each subject.
+
+```{r}
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  gghistogram(x = "rt_s", fill = "#f7a800", rug = TRUE, bins = 60, xlim = c(0,60), ylim = c(0,400), xlab = ("Detection RT (sec)"), title = "All RTs")
+
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_mean_subj_RT <- tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  group_by(workerId) %>%
+  dplyr::summarize(mean_rt = mean(rt_s, na.rm=TRUE))
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_mean_subj_RT %>%
+  gghistogram(x = "mean_rt", fill = "#f7a800", rug = TRUE, bins = 20, xlim = c(0,20), ylim = c(0,10), xlab = ("Mean Detection RT (sec)"), title = "Subject Mean RT")
+```
+
+What is the percentage of outlier RTs that were removed overall?
+
+```{r}
+tbl_all_main_acc_rts_3SD_removed_count <- data.frame(total_removed = tbl_good_catch_acc_all_main_acc_inacc_trials_removed_counts$sum - tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts$sum)
+
+per_RTs_removed <- (sum(tbl_all_main_acc_rts_3SD_removed_count) / sum(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_counts$sum)) * 100
+per_RTs_removed
+```
+
+What is the percentage of outlier RTs that were removed per subject? This is easy to visualize in a plot.
+
+```{r}
+tbl_per_rts_3SD_removed_by_subj <- data.frame((tbl_all_main_acc_rts_3SD_removed_count / tbl_good_catch_acc_all_main_acc_inacc_trials_removed_counts$sum) * 100)
+tbl_per_rts_3SD_removed_by_subj <- cbind.data.frame(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_counts[1],tbl_all_main_acc_rts_3SD_removed_count,tbl_good_catch_acc_all_main_acc_inacc_trials_removed_counts$sum,tbl_per_rts_3SD_removed_by_subj)
+colnames(tbl_per_rts_3SD_removed_by_subj) <- c("workerId", "outlier_RTs", "total_RTs", "percent_excluded")
+#head(tbl_per_rts_3SD_removed_by_subj,10)
+
+tbl_per_rts_3SD_removed_by_subj %>% 
+  ggbarplot(x = "workerId", y = "percent_excluded", ylab = "% RTs excluded", fill = "#f7a800", font.tickslab = 8, sort.val = c("asc")) + rotate_x_text()
+```
+
+# Analyze data
+
+## Some summary statistics
+
+Let's again confirm how many subjects we're working with. This is the total number of subjects with good catch trial accuracy and good main trial accuracy.
+
+``` {r}
+nrow(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts %>% distinct(workerId,.keep_all = FALSE))
+```
+
+## Plot the results
+
+This is a plot of the mean detection RT for each image.
+
+```{r}
+tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  ggbarplot(x = "image", y = "rt_s", ylab = "Mean Detection RT (sec)", fill = "#f7a800", add = "mean_se", font.xtickslab = 8, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+
+write.csv(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed,'Ma_raw_RTs.csv', row.names=FALSE)
+```
+
+This table contains the final count for each image. This is after RTs were excluded that were more than 3 SDs from the mean.
+
+```{r}
+image_count_final <- data.frame(image_count = colSums(tbl_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts[,2:70], na.rm = TRUE))
+knitr::kable(image_count_final)
+```

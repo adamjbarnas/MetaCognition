@@ -1,0 +1,733 @@
+---
+title: "MetaAwarness - Experiment 1 - Task 2"
+author: "Adam Barnas"
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(lme4)
+library(lmerTest)
+library(irrNA)
+library(psy)
+library(coefficientalpha)
+library(parameters)
+library(dplyr)
+```
+
+# Meta-cognitive judgments of change detection ability.
+
+## Returning subjects.
+
+### Rensink.
+
+#### Read-in datafiles.
+
+```{r warning=FALSE}
+rensink_MC_all <- list.files(path = "/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Rensink/Return_subj_difficulty_ratings", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character")))
+rensink_MC_all <- data.frame(rensink_MC_all)
+
+rensink_MC_all <- rensink_MC_all %>%
+  separate(image_a,into=c('database', 'image', NA), sep = "([\\_\\-])")
+```
+
+Get a count of the number of returning subjects.
+
+``` {r}
+nrow(rensink_MC_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Analyze catch trials.
+
+```{r}
+rensink_MC_bad_catch <- rensink_MC_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Cow_resp.keys < 4) | (any(Garden_resp.keys > 2)))
+nrow(rensink_MC_bad_catch %>% distinct(workerId,.keep_all = FALSE))
+
+rensink_MC_good_catch <- rensink_MC_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Cow_resp.keys >= 4) & (any(Garden_resp.keys <= 2) | is.na(any(Garden_resp.keys))))
+nrow(rensink_MC_good_catch %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Some data manipulation.
+
+```{r}
+rensink_MC_good_catch = subset(rensink_MC_good_catch, select = c(user_resp.keys,user_resp.rt,workerId,database,image))
+col_idx <- grep("workerId", names(rensink_MC_good_catch))
+rensink_MC_good_catch <- rensink_MC_good_catch[, c(col_idx, (1:ncol(rensink_MC_good_catch))[-col_idx])]
+rensink_MC_good_catch <- data.frame(na.omit(rensink_MC_good_catch))
+```
+
+#### Count number of ratings.
+
+```{r}
+rensink_MC_good_catch_likelihood_count <- rensink_MC_good_catch %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+rensink_MC_good_catch_likelihood_count <- data.frame(count = colSums(rensink_MC_good_catch_likelihood_count[,2:49], na.rm = TRUE))
+rensink_MC_good_catch_likelihood_count <- tibble::rownames_to_column(rensink_MC_good_catch_likelihood_count, "image")
+rensink_MC_good_catch_likelihood_count
+```
+
+#### Count number of ratings based on CB data.
+
+```{r}
+rensink_CB_final <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Rensink_CB_final.csv", col_types = cols())
+rensink_CB_final <- rensink_CB_final[, -c(2,3,6:10,12:16,18,19)]
+
+rensink_CB_final <- rensink_CB_final[(rensink_CB_final$workerId %in% rensink_MC_good_catch$workerId),]
+
+rensink_MC_good_catch <- rensink_MC_good_catch[order(rensink_MC_good_catch$workerId, rensink_MC_good_catch$image), , drop = FALSE]
+
+rensink_CB_final <- rensink_CB_final[order(rensink_CB_final$workerId, rensink_CB_final$image), , drop = FALSE]
+
+rensink_CB_MC <- left_join(rensink_CB_final, rensink_MC_good_catch, by = c("workerId", "image"))
+
+rensink_CB_MC <- rensink_CB_MC[,c(1:6)]
+
+colnames(rensink_CB_MC) <- c("workerId", "stim_set", "image", "trial_number", "log_rt", "likelihood_rating")
+
+rensink_CB_MC_likelihood_count <- rensink_CB_MC %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+rensink_CB_MC_likelihood_count <- data.frame(count = colSums(rensink_CB_MC_likelihood_count[,2:49], na.rm = TRUE))
+rensink_CB_MC_likelihood_count <- tibble::rownames_to_column(rensink_CB_MC_likelihood_count, "image")
+rensink_CB_MC_likelihood_count
+```
+
+#### Add change type to dataframe.
+
+```{r message=FALSE}
+rensink_change_type<- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Rensink_change_type.csv")
+rensink_CB_MC <- left_join(rensink_CB_MC, rensink_change_type, by = "image")
+```
+
+#### Plot.
+
+```{r}
+rensink_CB_MC <- rensink_CB_MC %>%
+  drop_na()
+rensink_CB_MC %>% 
+  ggbarplot(x = "image", y = "likelihood_rating", ylab = "Mean Likelihood of Detecting Change", ylim = c(1,5), xlab = "Image", fill = "#f7a800", add = "mean_se", font.xtickslab = 8, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+```
+
+### Ma.
+
+#### Read-in datafiles.
+
+```{r warning=FALSE}
+ma_MC_all <- list.files(path = "/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Ma/Return_subj_difficulty_ratings", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character")))
+ma_MC_all <- data.frame(ma_MC_all)
+
+ma_MC_all <- ma_MC_all %>%
+  separate(image_a,into=c('database', 'image', NA), sep = "([\\_\\-])")
+```
+
+Get a count of the number of returning subjects.
+
+``` {r}
+nrow(ma_MC_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Analyze catch trials.
+
+```{r}
+ma_MC_bad_catch <- ma_MC_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Cow_resp.keys < 4) | (any(Garden_resp.keys > 2)))
+nrow(ma_MC_bad_catch %>% distinct(workerId,.keep_all = FALSE))
+
+ma_MC_good_catch <- ma_MC_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Cow_resp.keys >= 4) & (any(Garden_resp.keys <= 2) | is.na(any(Garden_resp.keys))))
+nrow(ma_MC_good_catch %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Some data manipulation.
+
+```{r}
+ma_MC_good_catch = subset(ma_MC_good_catch, select = c(user_resp.keys,user_resp.rt,workerId,database,image))
+col_idx <- grep("workerId", names(ma_MC_good_catch))
+ma_MC_good_catch <- ma_MC_good_catch[, c(col_idx, (1:ncol(ma_MC_good_catch))[-col_idx])]
+ma_MC_good_catch <- data.frame(na.omit(ma_MC_good_catch))
+```
+
+#### Count number of ratings.
+
+```{r}
+ma_MC_good_catch_likelihood_count <- ma_MC_good_catch %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+ma_MC_good_catch_likelihood_count <- data.frame(count = colSums(ma_MC_good_catch_likelihood_count[,2:70], na.rm = TRUE))
+ma_MC_good_catch_likelihood_count <- tibble::rownames_to_column(ma_MC_good_catch_likelihood_count, "image")
+ma_MC_good_catch_likelihood_count
+```
+
+#### Count number of ratings based on CB data.
+
+```{r}
+ma_CB_final <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Ma_CB_final.csv", col_types = cols())
+ma_CB_final <- ma_CB_final[, -c(2,3,6:10,12:16,18,19)]
+
+ma_CB_final <- ma_CB_final[(ma_CB_final$workerId %in% ma_MC_good_catch$workerId),]
+
+ma_MC_good_catch <- ma_MC_good_catch[order(ma_MC_good_catch$workerId, ma_MC_good_catch$image), , drop = FALSE]
+
+ma_MC_good_catch <- ma_MC_good_catch %>%  
+    mutate(image = as.numeric(image))
+
+ma_CB_final <- ma_CB_final[order(ma_CB_final$workerId, ma_CB_final$image), , drop = FALSE]
+
+ma_CB_MC <- left_join(ma_CB_final, ma_MC_good_catch, by = c("workerId", "image"))
+
+ma_CB_MC <- ma_CB_MC[,c(1:6)]
+
+colnames(ma_CB_MC) <- c("workerId", "stim_set", "image", "trial_number", "log_rt", "likelihood_rating")
+
+ma_CB_MC_likelihood_count <- ma_CB_MC %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+ma_CB_MC_likelihood_count <- data.frame(count = colSums(ma_CB_MC_likelihood_count[,2:70], na.rm = TRUE))
+ma_CB_MC_likelihood_count <- tibble::rownames_to_column(ma_CB_MC_likelihood_count, "image")
+ma_CB_MC_likelihood_count
+```
+
+#### Add change type to dataframe.
+
+```{r message=FALSE}
+ma_change_type<- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Ma_change_type.csv")
+ma_change_type <- ma_change_type %>%  
+    mutate(image = as.numeric(image))
+ma_CB_MC <- left_join(ma_CB_MC, ma_change_type, by = "image")
+```
+
+#### Plot.
+
+```{r}
+ma_CB_MC <- ma_CB_MC %>%
+  drop_na()
+ma_CB_MC %>% 
+  ggbarplot(x = "image", y = "likelihood_rating", ylab = "Mean Likelihood of Detecting Change", ylim = c(1,5), xlab = "Image", fill = "#f7a800", add = "mean_se", font.xtickslab = 6, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+```
+
+### Wolfe1.
+
+#### Read-in datafiles.
+
+```{r warning=FALSE}
+wolfe1_MC_all <- list.files(path = "/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe1/Return_subj_difficulty_ratings", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character")))
+wolfe1_MC_all <- data.frame(wolfe1_MC_all)
+
+wolfe1_MC_all <- wolfe1_MC_all %>%
+  separate(image_a,into=c('database', 'image'), sep = "([\\_])")
+wolfe1_MC_all$image <- lapply(wolfe1_MC_all$image, gsub, pattern='-a', replacement='')
+wolfe1_MC_all <- wolfe1_MC_all %>%  
+    mutate(image = as.character(image))
+wolfe1_MC_all$database = "wolfe1"
+```
+
+Get a count of the number of returning subjects.
+
+``` {r}
+nrow(wolfe1_MC_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Analyze catch trials.
+
+```{r}
+wolfe1_MC_bad_catch <- wolfe1_MC_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Cow_resp.keys < 4) | (any(Garden_resp.keys > 2)))
+nrow(wolfe1_MC_bad_catch %>% distinct(workerId,.keep_all = FALSE))
+
+wolfe1_MC_good_catch <- wolfe1_MC_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Cow_resp.keys >= 4) & (any(Garden_resp.keys <= 2) | is.na(any(Garden_resp.keys))))
+nrow(wolfe1_MC_good_catch %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Some data manipulation.
+
+```{r}
+wolfe1_MC_good_catch = subset(wolfe1_MC_good_catch, select = c(user_resp.keys,user_resp.rt,workerId,database,image))
+col_idx <- grep("workerId", names(wolfe1_MC_good_catch))
+wolfe1_MC_good_catch <- wolfe1_MC_good_catch[, c(col_idx, (1:ncol(wolfe1_MC_good_catch))[-col_idx])]
+wolfe1_MC_good_catch <- data.frame(na.omit(wolfe1_MC_good_catch))
+```
+
+#### Count number of ratings.
+
+```{r}
+wolfe1_MC_good_catch_likelihood_count <- wolfe1_MC_good_catch %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+wolfe1_MC_good_catch_likelihood_count <- data.frame(count = colSums(wolfe1_MC_good_catch_likelihood_count[,2:112], na.rm = TRUE))
+wolfe1_MC_good_catch_likelihood_count <- tibble::rownames_to_column(wolfe1_MC_good_catch_likelihood_count, "image")
+wolfe1_MC_good_catch_likelihood_count
+```
+
+#### Count number of ratings based on CB data.
+
+```{r}
+wolfe1_CB_final <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Wolfe1_CB_final.csv", col_types = cols())
+wolfe1_CB_final <- wolfe1_CB_final[, -c(2,3,6:10,12:16,18,19)]
+
+wolfe1_CB_final <- wolfe1_CB_final[(wolfe1_CB_final$workerId %in% wolfe1_MC_good_catch$workerId),]
+
+wolfe1_MC_good_catch <- wolfe1_MC_good_catch[order(wolfe1_MC_good_catch$workerId, wolfe1_MC_good_catch$image), , drop = FALSE]
+
+wolfe1_CB_final <- wolfe1_CB_final[order(wolfe1_CB_final$workerId, wolfe1_CB_final$image), , drop = FALSE]
+
+wolfe1_CB_MC <- left_join(wolfe1_CB_final, wolfe1_MC_good_catch, by = c("workerId", "image"))
+
+wolfe1_CB_MC <- wolfe1_CB_MC[,c(1:6)]
+
+colnames(wolfe1_CB_MC) <- c("workerId", "stim_set", "image", "trial_number", "log_rt", "likelihood_rating")
+
+wolfe1_CB_MC$stim_set = "wolfe1"
+
+wolfe1_CB_MC_likelihood_count <- wolfe1_CB_MC %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+wolfe1_CB_MC_likelihood_count <- data.frame(count = colSums(wolfe1_CB_MC_likelihood_count[,2:112], na.rm = TRUE))
+wolfe1_CB_MC_likelihood_count <- tibble::rownames_to_column(wolfe1_CB_MC_likelihood_count, "image")
+wolfe1_CB_MC_likelihood_count
+```
+
+#### Add change type to dataframe.
+
+```{r message=FALSE}
+wolfe1_change_type<- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Wolfe1_change_type.csv")
+wolfe1_CB_MC <- left_join(wolfe1_CB_MC, wolfe1_change_type, by = "image")
+```
+
+#### Plot.
+
+```{r}
+wolfe1_CB_MC <- wolfe1_CB_MC %>%
+  drop_na()
+wolfe1_CB_MC %>% 
+  ggbarplot(x = "image", y = "likelihood_rating", ylab = "Mean Likelihood of Detecting Change", ylim = c(1,5), xlab = "Image", fill = "#f7a800", add = "mean_se", font.xtickslab = 4, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+```
+
+### Wolfe2.
+
+#### Read-in datafiles.
+
+```{r warning=FALSE}
+wolfe2_MC_all <- list.files(path = "/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Return_subj_difficulty_ratings", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+wolfe2_MC_all <- data.frame(wolfe2_MC_all)
+
+wolfe2_MC_all <- wolfe2_MC_all %>%
+  separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_MC_all$image <- lapply(wolfe2_MC_all$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+wolfe2_MC_all <- wolfe2_MC_all %>%  
+    mutate(image = as.character(image))
+wolfe2_MC_all$database = "wolfe2"
+```
+
+Get a count of the number of returning subjects.
+
+``` {r}
+nrow(wolfe2_MC_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Analyze catch trials.
+
+```{r}
+wolfe2_MC_bad_catch <- wolfe2_MC_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Cow_resp.keys < 4) | (any(Garden_resp.keys > 2)))
+nrow(wolfe2_MC_bad_catch %>% distinct(workerId,.keep_all = FALSE))
+
+wolfe2_MC_good_catch <- wolfe2_MC_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Cow_resp.keys >= 4) & (any(Garden_resp.keys <= 2) | is.na(any(Garden_resp.keys))))
+nrow(wolfe2_MC_good_catch %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Some data manipulation.
+
+```{r}
+wolfe2_MC_good_catch = subset(wolfe2_MC_good_catch, select = c(user_resp.keys,user_resp.rt,workerId,database,image))
+col_idx <- grep("workerId", names(wolfe2_MC_good_catch))
+wolfe2_MC_good_catch <- wolfe2_MC_good_catch[, c(col_idx, (1:ncol(wolfe2_MC_good_catch))[-col_idx])]
+wolfe2_MC_good_catch <- data.frame(na.omit(wolfe2_MC_good_catch))
+```
+
+#### Count number of ratings.
+
+```{r}
+wolfe2_MC_good_catch_likelihood_count <- wolfe2_MC_good_catch %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+wolfe2_MC_good_catch_likelihood_count <- data.frame(count = colSums(wolfe2_MC_good_catch_likelihood_count[,2:255], na.rm = TRUE))
+wolfe2_MC_good_catch_likelihood_count <- tibble::rownames_to_column(wolfe2_MC_good_catch_likelihood_count, "image")
+wolfe2_MC_good_catch_likelihood_count
+```
+
+#### Count number of ratings based on CB data.
+
+```{r}
+wolfe2_CB_final <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Wolfe2_CB_final.csv", col_types = cols())
+wolfe2_CB_final <- wolfe2_CB_final[, -c(2,3,6:10,12:16,18,19)]
+
+wolfe2_CB_final <- wolfe2_CB_final[(wolfe2_CB_final$workerId %in% wolfe2_MC_good_catch$workerId),]
+
+wolfe2_MC_good_catch <- wolfe2_MC_good_catch[order(wolfe2_MC_good_catch$workerId, wolfe2_MC_good_catch$image), , drop = FALSE]
+
+wolfe2_CB_final <- wolfe2_CB_final[order(wolfe2_CB_final$workerId, wolfe2_CB_final$image), , drop = FALSE]
+
+wolfe2_CB_MC <- left_join(wolfe2_CB_final, wolfe2_MC_good_catch, by = c("workerId", "image"))
+
+wolfe2_CB_MC <- wolfe2_CB_MC[,c(1:6)]
+
+colnames(wolfe2_CB_MC) <- c("workerId", "stim_set", "image", "trial_number", "log_rt", "likelihood_rating")
+
+wolfe2_CB_MC$stim_set = "wolfe2"
+
+wolfe2_CB_MC_likelihood_count <- wolfe2_CB_MC %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+wolfe2_CB_MC_likelihood_count <- data.frame(count = colSums(wolfe2_CB_MC_likelihood_count[,2:255], na.rm = TRUE))
+wolfe2_CB_MC_likelihood_count <- tibble::rownames_to_column(wolfe2_CB_MC_likelihood_count, "image")
+wolfe2_CB_MC_likelihood_count
+```
+
+#### Add change type to dataframe.
+
+```{r message=FALSE}
+wolfe2_change_type<- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Wolfe2_change_type.csv")
+wolfe2_CB_MC <- left_join(wolfe2_CB_MC, wolfe2_change_type, by = "image")
+```
+
+#### Plot.
+
+```{r message=FALSE, warning=FALSE}
+wolfe2_CB_MC <- wolfe2_CB_MC %>%
+  drop_na()
+wolfe2_CB_MC %>% 
+  ggbarplot(x = "image", y = "likelihood_rating", ylab = "Mean Likelihood of Detecting Change", ylim = c(1,5), xlab = "Image", fill = "#f7a800", add = "mean_se", font.xtickslab = 2, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+```
+
+### Combined results
+
+Initial number of subjects.
+
+```{r}
+MC_initial_sample_size <- nrow(rensink_MC_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_MC_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_MC_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_MC_all %>% distinct(workerId,.keep_all = FALSE))
+MC_initial_sample_size
+```
+
+Initial return rate
+
+```{r}
+(MC_initial_sample_size/402)*100
+```
+
+Number of subjects who missed catch trials.
+
+```{r}
+nrow(rensink_MC_bad_catch %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_MC_bad_catch %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_MC_bad_catch %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_MC_bad_catch %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Number of subjects in final sample.
+
+```{r}
+MC_final_sample_size <- nrow(rensink_MC_good_catch %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_MC_good_catch %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_MC_good_catch %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_MC_good_catch %>% distinct(workerId,.keep_all = FALSE))
+MC_final_sample_size
+```
+
+Compute average likelihood rating.
+
+```{r message=FALSE, warning=FALSE}
+table <- rbind(rensink_MC_good_catch, ma_MC_good_catch, wolfe1_MC_good_catch, wolfe2_MC_good_catch)
+all_CB_MC_changetype <- rbind(rensink_CB_MC, ma_CB_MC, wolfe1_CB_MC, wolfe2_CB_MC)
+
+all_CB_MC_changetype_avg <- all_CB_MC_changetype %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(average = mean(likelihood_rating)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(all_CB_MC_changetype_avg$subj_avg)
+sd(all_CB_MC_changetype_avg$subj_avg)
+range(all_CB_MC_changetype_avg$subj_avg)
+
+all_CB_MC_changetype_count <- all_CB_MC_changetype %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+all_CB_MC_changetype_count <- data.frame(count = colSums(all_CB_MC_changetype_count[,2:482], na.rm = TRUE))
+all_CB_MC_changetype_count <- tibble::rownames_to_column(all_CB_MC_changetype_count, "image")
+all_CB_MC_changetype_count
+mean(all_CB_MC_changetype_count$count)
+sd(all_CB_MC_changetype_count$count)
+range(all_CB_MC_changetype_count$count)
+```
+
+Add box and change info.
+
+```{r message=FALSE, warning=FALSE}
+Box_and_change_info <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Box_and_change_info.csv")
+Box_and_change_info <- Box_and_change_info %>% 
+  filter(!grepl('catch', image)) %>% 
+  separate(image,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+Box_and_change_info$image <- lapply(Box_and_change_info$image, gsub, pattern='-a', replacement='')
+Box_and_change_info$image <- as.character(Box_and_change_info$image)
+all_CB_MC_changetype_boxsize_changesize_eccentricity <- left_join(all_CB_MC_changetype, Box_and_change_info, by = "image")
+
+write.csv(all_CB_MC_changetype_boxsize_changesize_eccentricity, "all_CB_MC_changetype_boxsize_changesize_eccentricity.csv", row.names=FALSE)
+```
+
+# Result #1.
+
+Do likelihood rating predict change blindness duration?
+Yes, meta-cognitive judgments of change detection predict change blindness duration.
+
+```{r message=FALSE, warning=FALSE}
+result_1 <- lmer(scale(log_rt) ~ scale(likelihood_rating) + (1 | workerId) + (1 | image) + (1 | stim_set), data=all_CB_MC_changetype_boxsize_changesize_eccentricity)
+summary(result_1)
+ci(result_1)
+
+plots <- all_CB_MC_changetype_boxsize_changesize_eccentricity %>%
+   group_by(image) %>%
+   dplyr::summarize(log_rt = mean(log_rt), likelihood_rating = mean(likelihood_rating), change_type = unique(change_type), eccentricity = mean(eccentricity), box_percent = mean(box_percent), change_percent = mean(change_percent))
+  
+plots %>% 
+  ggscatter(y = "log_rt", x = "likelihood_rating", ylab = "Change Blindness (log sec)", xlab = "Likelihood of Detecting Change", add = "reg.line", color = "#444B6E", alpha = 0.75, conf.int = TRUE, xlim = c(1, 5), ylim = c(0.75, 1.6), size = 4) + font("xylab", size = 20, family = "Helvetica") + font("xy.text", size = 16, family = "Helvetica") + theme(aspect.ratio=1) 
+ggsave("MS_fig_2a.jpg")
+```
+
+# Result #2.
+
+Do likelihood ratings and low image-level properties (size and eccentricity of the change) predict change blindness duration?
+Yes, likelihood ratings and low image-level properties together predict change blindness duration.
+
+```{r message=FALSE, warning=FALSE}
+result_2 <- lmer(scale(log_rt) ~ scale(likelihood_rating) + scale(change_percent) + scale(eccentricity) + (1 | workerId) + (1 | image) + (1 | stim_set), data=all_CB_MC_changetype_boxsize_changesize_eccentricity)
+summary(result_2)
+ci(result_2)
+
+matrix_coef <- data.frame(summary(result_2)$coefficients)
+matrix_coef 
+matrix_coef = matrix_coef[-1,]
+matrix_coef <- data.frame("Effect"=rownames(matrix_coef), matrix_coef)
+
+matrix_coef %>% 
+  ggbarplot(y = "Estimate", x = "Effect", order = c("scale(likelihood_rating)", "scale(change_percent)", "scale(eccentricity)"), fill = "#9AB87A", xlab = "Fixed Effect", ylab = "Standardized Regression Estimate", ylim = c(-.12, .12), lab.pos = "out", lab.vjust = c(-1, -1, 10), label = c("Difficulty", "Size", "Eccentricity"), width = 0.5, lab.size = 4) + geom_hline(yintercept=0) + theme(axis.text.x = element_blank(), axis.ticks = element_blank())  + font("xylab", size = 19, family = "Helvetica") + font("y.text", size = 16, family = "Helvetica") + theme(aspect.ratio=4/3) + geom_errorbar(aes(ymin = Estimate - Std..Error, ymax = Estimate + Std..Error), width=0.3)
+ggsave("MS_fig_2b.jpg")
+```
+
+# Result #3.
+
+Do low image-level properties (size and eccentricity of the change) predict likelihood ratings?
+No, low image-level properties do not predict likelihood ratings.
+
+```{r message=FALSE, warning=FALSE}
+result_3 <- lmer(scale(likelihood_rating) ~ scale(change_percent) + scale(eccentricity) + (1 | workerId) + (1 | image) + (1 | stim_set), data=all_CB_MC_changetype_boxsize_changesize_eccentricity)
+summary(result_3)
+ci(result_3)
+```
+
+# New results.
+
+## Fast/easy vs. slow/hard.
+
+```{r message=FALSE, warning=FALSE}
+all_average_CB <- all_CB_MC_changetype %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(average = mean(log_rt)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+
+all_average_CB <- data.frame(CB = colMeans(all_average_CB[,2:482], na.rm = TRUE))
+all_average_CB <- tibble::rownames_to_column(all_average_CB, "image")
+all_average_CB <- all_average_CB %>% 
+  arrange(CB)
+all_average_CB
+
+nr <- nrow(all_average_CB)
+n <- (nr/2)
+all_average_CB_list <- split(all_average_CB, rep(1:ceiling(nr/n+1), each=n+1, length.out=nr))
+all_average_CB_Easiest <- all_average_CB_list[[1]]
+all_average_CB_Hardest <- all_average_CB_list[[2]]
+
+all_CB_MC_Easiest <- all_CB_MC_changetype[(all_CB_MC_changetype$image %in% all_average_CB_Easiest$image),]
+all_CB_MC_Hardest <- all_CB_MC_changetype[(all_CB_MC_changetype$image %in% all_average_CB_Hardest$image),]
+
+Box_and_change_info <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Box_and_change_info.csv")
+Box_and_change_info <- Box_and_change_info %>% 
+  filter(!grepl('catch', image)) %>% 
+  separate(image,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+Box_and_change_info$image <- lapply(Box_and_change_info$image, gsub, pattern='-a', replacement='')
+Box_and_change_info$image <- as.character(Box_and_change_info$image)
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_Easiest <- left_join(all_CB_MC_Easiest, Box_and_change_info, by = "image")
+all_CB_MC_changetype_boxsize_changesize_eccentricity_Easiest$Easiest_Hardest = "Easiest"
+all_CB_MC_changetype_boxsize_changesize_eccentricity_Hardest <- left_join(all_CB_MC_Hardest, Box_and_change_info, by = "image")
+all_CB_MC_changetype_boxsize_changesize_eccentricity_Hardest$Easiest_Hardest = "Hardest"
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest <- rbind(all_CB_MC_changetype_boxsize_changesize_eccentricity_Easiest, all_CB_MC_changetype_boxsize_changesize_eccentricity_Hardest)
+
+write.csv(all_CB_MC_changetype_boxsize_changesize_eccentricity_Easiest, "all_CB_MC_changetype_boxsize_changesize_eccentricity_Easiest.csv", row.names=FALSE)
+write.csv(all_CB_MC_changetype_boxsize_changesize_eccentricity_Hardest, "all_CB_MC_changetype_boxsize_changesize_eccentricity_Hardest.csv", row.names=FALSE)
+
+East_hard <- lmer(scale(log_rt) ~ scale(likelihood_rating)*Easiest_Hardest + (1 | workerId) + (1 | image) + (1 | stim_set), data=all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest)
+summary(East_hard)
+ci(East_hard)
+
+plots_1 <- all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest %>%
+   group_by(image) %>%
+   dplyr::summarize(log_rt = mean(log_rt), likelihood_rating = mean(likelihood_rating), change_type = unique(change_type), eccentricity = mean(eccentricity), box_percent = mean(box_percent), change_percent = mean(change_percent), Easiest_Hardest= unique(Easiest_Hardest))
+  
+plots_1 %>% 
+  ggscatter(y = "log_rt", x = "likelihood_rating", color = "Easiest_Hardest", ylab = "Change Blindness (log sec)", xlab = "Likelihood of Detecting Change", add = "reg.line", fullrange = TRUE, palette = c("#BC1E40", "#444B6E"), alpha = 0.75, conf.int = TRUE, xlim = c(1, 5), ylim = c(0.75, 1.6),  legend = c(.7,.95), size = 4) + theme(legend.title=element_blank()) + font("xylab", size = 20, family = "Helvetica") + font("xy.text", size = 16, family = "Helvetica") + font("legend.text", size = 16, family = "Helvetica") + theme(aspect.ratio=1) 
+ggsave("MS_fig_2_extra1.jpg")
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest$rt_s <- 10^(all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest$log_rt)
+
+EasyHard_descrip <- all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest %>% 
+  group_by(Easiest_Hardest) %>% 
+  dplyr::summarize(mean = mean(rt_s), sd = sd(rt_s))
+EasyHard_descrip
+```
+
+## Individual metacognitive performance.
+
+```{r message=FALSE, warning=FALSE}
+func1 <- function(all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest)
+{
+return(data.frame(corr_indiv = cor(all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest$log_rt, all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest$likelihood_rating)))
+}
+
+tbl_corr_indiv <- ddply(all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest, .(workerId), func1)
+
+tbl_corr_indiv$fisherZ_indiv <- .5*((log(1+tbl_corr_indiv$corr_indiv)) - (log(1-tbl_corr_indiv$corr_indiv)))
+
+func2 <- function(all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest)
+{
+return(data.frame(mean_CB = mean(all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest$log_rt)))
+}
+
+tbl_mean_CB <- ddply(all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest, .(workerId), func2)
+
+tbl <- cbind(tbl_corr_indiv, tbl_mean_CB[2])
+
+tbl[tbl == -Inf] <- 0
+tbl[is.na(tbl)] <- 0
+
+cor.test(tbl$fisherZ_indiv, tbl$mean_CB, use="complete.obs", method="pearson")
+
+tbl %>% 
+  ggscatter(y = "mean_CB", x = "fisherZ_indiv", ylab = "Mean Change Blindness (log sec)", xlab = "Individual Metacognitive Performance ", add = "reg.line", ylim = c(0.6, 1.4), color = "#444B6E", alpha = 0.75, conf.int = TRUE, size = 4) + font("xylab", size = 18, family = "Helvetica") + font("xy.text", size = 16, family = "Helvetica") + theme(aspect.ratio=1) 
+ggsave("MS_fig_2_extra2.jpg")
+```
+
+## First half vs. last half.
+
+```{r message=FALSE, warning=FALSE}
+all_workerID <- data.frame(unique(all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest$workerId))
+colnames(all_workerID) <- "workerId"
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_firsthalf <- all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest %>% 
+  filter(trial_number <= 17)
+firsthalf_workerID <- data.frame(unique(all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_firsthalf$workerId))
+colnames(firsthalf_workerID) <- "workerId"
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_secondhalf <- all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest %>% 
+  filter(trial_number >= 18)
+secondhalf_workerID <- data.frame(unique(all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_secondhalf$workerId))
+colnames(secondhalf_workerID) <- "workerId"
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_firsthalf$first_last <- "first"
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_secondhalf$first_last <- "last"
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_firstlast <- rbind(all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_firsthalf,all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_secondhalf)
+
+first_last <- lmer(scale(log_rt) ~ scale(likelihood_rating)*first_last + (1 | workerId) + (1 | image) + (1 | stim_set), data=all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_firstlast)
+summary(first_last)
+ci(first_last)
+```
+
+# Images rated 1 and images rated 5
+
+```{r message=FALSE, warning=FALSE}
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_1and5 <- all_CB_MC_changetype_boxsize_changesize_eccentricity_EasiestHardest %>% 
+  filter(likelihood_rating == 1 | likelihood_rating == 5)
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_1and5$rt_s<-10^(all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_1and5$log_rt)
+
+t1and5 <- t.test(rt_s ~ likelihood_rating, data=all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_1and5, var.equal = TRUE)
+t1and5
+
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_1and5summary <- all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_1and5 %>% 
+  group_by(likelihood_rating) %>% 
+  dplyr::summarize(average = mean(rt_s), sd = sd(rt_s))
+all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_1and5summary
+
+images_1_5 <- lmer(scale(rt_s) ~ scale(likelihood_rating) + (1 | workerId) + (1 | image) + (1 | stim_set), data=all_CB_MC_changetype_boxsize_changesize_eccentricity_fastslow_1and5)
+summary(images_1_5)
+ci(images_1_5)
+```
+

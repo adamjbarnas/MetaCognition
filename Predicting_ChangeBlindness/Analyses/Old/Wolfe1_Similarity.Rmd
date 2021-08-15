@@ -1,0 +1,156 @@
+---
+title: "Combined Stimulus Sets Meta-Awareness"
+author: "Adam Barnas"
+#date: '`r Sys.Date()`'
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(lme4)
+library(lmerTest)
+library(irrNA)
+library(psy)
+library(coefficientalpha)
+library(parameters)
+```
+
+# Set the R working drectory to the main experiment directory.
+
+```{r message=FALSE}
+setwd("/Users/adambarnas/Box/MetaAwareness/data/")  
+```
+
+# Read in data files.
+
+```{r warning=FALSE}
+wolfe1_similarity <- list.files(path = "./Wolfe1_Similarity", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(wolfe1_similarity %>% distinct(workerId,.keep_all = FALSE))
+wolfe1_similarity_bad <- wolfe1_similarity %>% 
+  group_by(workerId) %>% 
+  #filter(any(catch_same_resp.keys != 6) | any(catch_different_resp.keys != 1))
+  filter(any(catch_same_resp.keys != 6))
+wolfe1_bad_workers <- data.frame(unique(wolfe1_similarity_bad$workerId))
+colnames(wolfe1_bad_workers) <- c("workerId")
+write.csv(wolfe1_bad_workers,'wolfe1_bad_workers.csv', row.names=FALSE)
+wolfe1_similarity_good <- wolfe1_similarity %>% 
+  group_by(workerId) %>% 
+  #filter(any(catch_same_resp.keys == 6) & any(catch_different_resp.keys == 1))
+  filter(any(catch_same_resp.keys == 6))
+nrow(wolfe1_similarity_good %>% distinct(workerId,.keep_all = FALSE))
+wolfe1_similarity_images = subset(wolfe1_similarity_good, select = c(user_resp.keys,database,image,number,workerId))
+col_idx <- grep("workerId", names(wolfe1_similarity_images))
+wolfe1_similarity_images <- wolfe1_similarity_images[, c(col_idx, (1:ncol(wolfe1_similarity_images))[-col_idx])]
+colnames(wolfe1_similarity_images) <- c("workerId", "similarity", "database", "image", "number")
+wolfe1_similarity_images <- data.frame(na.omit(wolfe1_similarity_images))
+wolfe1_similarity_images <- wolfe1_similarity_images %>%  
+    mutate(image = as.character(image))
+```
+
+# Image-level.
+
+## Count.
+
+```{r}
+wolfe1_similarity_images_count <- wolfe1_similarity_images %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe1_similarity_images_count <- data.frame(count = colSums(wolfe1_similarity_images_count[,2:112], na.rm = TRUE))
+wolfe1_similarity_images_count <- tibble::rownames_to_column(wolfe1_similarity_images_count, "image")
+wolfe1_similarity_images_count
+```
+
+## Average.
+
+```{r}
+wolfe1_similarity_images_average <- wolfe1_similarity_images %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(average = mean(similarity)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(wolfe1_similarity_images_average$subj_avg)
+
+wolfe1_similarity_images_average <- data.frame(semantic_similarity = colMeans(wolfe1_similarity_images_average[,2:112], na.rm = TRUE))
+wolfe1_similarity_images_average <- tibble::rownames_to_column(wolfe1_similarity_images_average, "image")
+wolfe1_similarity_images_average
+write.csv(wolfe1_similarity_images_average,'wolfe1_semantic_similarity_rating.csv', row.names=FALSE)
+```
+
+# Description-level.
+
+## Count.
+
+```{r}
+wolfe1_similarity_images$x <- paste0(wolfe1_similarity_images$image,"_",wolfe1_similarity_images$number)
+wolfe1_similarity_descriptions_count <- wolfe1_similarity_images %>% 
+  group_by(workerId,x) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(x,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = FALSE))
+
+wolfe1_similarity_descriptions_count <- data.frame(count = colSums(wolfe1_similarity_descriptions_count[,2:637], na.rm = TRUE))
+wolfe1_similarity_descriptions_count <- tibble::rownames_to_column(wolfe1_similarity_descriptions_count, "description")
+wolfe1_similarity_descriptions_count
+
+wolfe1_semantic_final_descriptions <- read_csv("wolfe1_semantic_final_descriptions.csv")
+wolfe1_semantic_final_descriptions$x <- paste0(wolfe1_semantic_final_descriptions$image,"_",wolfe1_semantic_final_descriptions$number)
+description = subset(wolfe1_semantic_final_descriptions, select = c(x))
+description$count <- 0
+colnames(description) <- c("description", "count")
+description <- description %>%  
+    mutate(description = as.character(description))
+wolfe1_similarity_descriptions_count <- rbind(description,wolfe1_similarity_descriptions_count)%>%group_by(description)%>%summarise_each(funs(sum))
+wolfe1_similarity_descriptions_count
+
+wolfe1_similarity_descriptions_count <- wolfe1_similarity_descriptions_count %>% 
+  arrange(count)
+wolfe1_similarity_descriptions_count
+wolfe1_similarity_descriptions_count$stim_set <- "wolfe1"
+write.csv(wolfe1_similarity_descriptions_count, 'wolfe1_similarity_descriptions_count.csv', row.names=FALSE)
+
+wolfe1_similarity_descriptions_count_needed <- wolfe1_similarity_descriptions_count %>% 
+  filter(count < 3)
+wolfe1_semantic_final_descriptions_partial <- wolfe1_semantic_final_descriptions[(wolfe1_semantic_final_descriptions$x %in% wolfe1_similarity_descriptions_count_needed$description),]
+wolfe1_semantic_final_descriptions_partial = subset(wolfe1_semantic_final_descriptions_partial, select = -c(x))
+
+write.csv(wolfe1_semantic_final_descriptions_partial,'wolfe1_semantic_final_descriptions_partial.csv', row.names=FALSE)
+```
+
+## Average.
+
+```{r}
+wolfe1_similarity_descriptions_average <- wolfe1_similarity_images %>%
+  group_by(workerId,x) %>%
+  dplyr::summarize(average = mean(similarity)) %>%
+  spread(x,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(wolfe1_similarity_descriptions_average$subj_avg)
+
+wolfe1_similarity_descriptions_average <- data.frame(semantic_similarity = colMeans(wolfe1_similarity_descriptions_average[,2:637], na.rm = TRUE))
+wolfe1_similarity_descriptions_average <- tibble::rownames_to_column(wolfe1_similarity_descriptions_average, "image")
+wolfe1_similarity_descriptions_average
+```

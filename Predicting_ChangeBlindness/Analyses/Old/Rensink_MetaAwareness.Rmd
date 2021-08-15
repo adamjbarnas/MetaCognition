@@ -1,0 +1,187 @@
+---
+title: "Rensink Meta-Awareness"
+author: "Adam Barnas"
+#date: '`r Sys.Date()`'
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(EBImage)
+library(lme4)
+library(lmerTest)
+```
+
+# Set the R working drectory to the main experiment directory.
+
+```{r message=FALSE}
+setwd("/Volumes/Files//Box/MetaAwareness/data/")  
+```
+
+# Read in the individual subject files.
+
+```{r warning=FALSE}
+tbl_all <- list.files(path = "./Rensink_Return", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character")))
+nrow(tbl_all %>% distinct(workerId,.keep_all = FALSE))
+tbl_all <- tbl_all %>% 
+  group_by(workerId) %>% 
+  filter(any(Airplane_resp.keys >= 4) & any(Boat_resp.keys >= 4) & any(Cow_resp.keys >= 4) & (any(Garden_resp.keys <= 3) | is.na(any(Garden_resp.keys))))
+nrow(tbl_all %>% distinct(workerId,.keep_all = FALSE))
+tbl_all = subset(tbl_all, select = c(user_resp.keys,user_resp.rt,workerId,image_a))
+col_idx <- grep("workerId", names(tbl_all))
+tbl_all <- tbl_all[, c(col_idx, (1:ncol(tbl_all))[-col_idx])]
+tbl_all <- data.frame(na.omit(tbl_all))
+tbl_all <- tbl_all %>%
+separate(image_a,into=c('database', 'image', NA), sep = "([\\_\\-])")
+```
+
+# Compute average likelihood rating.
+
+``` {r}
+tbl_all_subj_avg <- tbl_all %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(average = mean(user_resp.keys)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(tbl_all_subj_avg$subj_avg)
+
+tbl_all_img_avg <- data.frame(img_avg = colMeans(tbl_all_subj_avg[,2:49], na.rm = TRUE))
+tbl_all_img_avg <- tibble::rownames_to_column(tbl_all_img_avg, "image")
+```
+
+# Merge Mudsplash and Meta-Awareness data files.
+
+```{r message=FALSE}
+rensink_RTs_raw <- read_csv("Rensink_RTs_raw.csv")
+rensink_RTs_raw <- rensink_RTs_raw[, -c(2,3,6:17,19,20)]
+unique(rensink_RTs_raw$workerId)
+#rensink_RTs_raw <- left_join(rensink_RTs_raw, rensink_change_type, by = "image")
+
+#rensink_RTs_raw <- rensink_RTs_raw %>% 
+#  group_by(image) %>% 
+#  dplyr::summarize(detection_rt = mean(rt_s))
+
+#rensink_RTs_raw <- left_join(rensink_RTs_raw, rensink_change_type, by = "image")
+
+#rensink_RTs_raw %>% 
+#  ggboxplot(x = "change_type", y = "detection_rt", label = "image", font.label = c(5, "plain", "black"))
+
+rensink_RTs_raw <- rensink_RTs_raw[(rensink_RTs_raw$workerId %in% tbl_all_subj_avg$workerId),]
+
+tbl_all <- tbl_all[order(tbl_all$workerId, tbl_all$image), , drop = FALSE]
+rensink_RTs_raw <- rensink_RTs_raw[order(rensink_RTs_raw$workerId, rensink_RTs_raw$image), , drop = FALSE]
+
+rensink_RTs_likelihood <- left_join(tbl_all, rensink_RTs_raw, by = c("workerId", "image"))
+colnames(rensink_RTs_likelihood)[2] <- "likelihood_rating"
+colnames(rensink_RTs_likelihood)[3] <- "likelihood_rt"
+colnames(rensink_RTs_likelihood)[7] <- "detection_rt"
+rensink_RTs_likelihood <- rensink_RTs_likelihood[, c(-4)]
+colnames(rensink_RTs_likelihood)[5] <- "stim_set"
+rensink_RTs_likelihood <- rensink_RTs_likelihood[,c(1,4,5,6,2,3)]
+```
+
+# Add change_type to dataframe.
+
+```{r message=FALSE}
+rensink_change_type<- read_csv("Rensink_change_type.csv")
+rensink_RTs_likelihood <- left_join(rensink_RTs_likelihood, rensink_change_type, by = "image")
+```
+
+# Compute likelihood rating for each image.
+
+```{r}
+rensink_RTs_likelihood %>%
+  ggbarplot(x = "image", y = "likelihood_rating", ylab = "Likelihood of Detecting Change", title = "All images (30 per subject)", fill = "#f7a800", add = "mean_se", font.xtickslab = 8, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+
+rensink_RTs_likelihood_no_NA <- rensink_RTs_likelihood %>%
+  drop_na()
+rensink_RTs_likelihood_no_NA %>% 
+  ggbarplot(x = "image", y = "likelihood_rating", ylab = "Likelihood of Detecting Change", title = "'Correct' images", fill = "#f7a800", add = "mean_se", font.xtickslab = 8, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+
+write.csv(rensink_RTs_likelihood,'Rensink_RTs_likelihood.csv', row.names=FALSE)
+write.csv(rensink_RTs_likelihood_no_NA,'Rensink_RTs_likelihood_no_NA.csv', row.names=FALSE)
+```
+
+# Count number of ratings.
+
+```{r}
+rensink_RTs_likelihood_count <- rensink_RTs_likelihood_no_NA %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+#head(tbl_all_counts,10)
+
+rensink_RTs_likelihood_count <- data.frame(count = colSums(rensink_RTs_likelihood_count[,2:49], na.rm = TRUE))
+rensink_RTs_likelihood_count <- tibble::rownames_to_column(rensink_RTs_likelihood_count, "image")
+rensink_RTs_likelihood_count
+```
+
+# Mixed effects model and correlation.
+
+## Raw RT
+
+```{r message=FALSE}
+fit_raw <- lmer(detection_rt ~ likelihood_rating * change_type + (1 | workerId) + (1 | image), data=rensink_RTs_likelihood_no_NA)
+summary(fit_raw)
+
+corr <- rensink_RTs_likelihood_no_NA %>% 
+  group_by(image) %>% 
+  dplyr::summarize(detection_rt = mean(detection_rt), likelihood_rating = mean(likelihood_rating))
+
+corr <- left_join(corr, rensink_change_type, by = "image")
+
+corr %>%
+  ggscatter(y = "detection_rt", x = "likelihood_rating", ylab = "Raw Change Detection RT (sec)", xlab = "Likelihood of Detecting Change", add = "reg.line", cor.coef = TRUE, cor.coeff.args = list(method = "pearson", label.x = 1, label.y = 12.5), conf.int = TRUE, xlim = c(1, 5), ylim = c(6, 14))
+
+corr %>%
+  ggscatter(y = "detection_rt", x = "likelihood_rating", color = "change_type", palette = c("#0d2240", "#00a8e1", "#f7a800", "#E31818", "#dfdddc"), ylab = "Raw Change Detection RT (sec)", xlab = "Likelihood of Detecting Change", add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(6, 14)) + stat_cor(aes(color = change_type), label.x = 1, label.y = c(12, 13, 14), method = "pearson")
+
+corr %>% 
+  ggboxplot(x = "change_type", y = "detection_rt", label = "image", font.label = c(5, "plain", "black"))
+```
+
+## Log RT
+
+```{r message=FALSE}
+fit_log <- lmer(log10(detection_rt) ~ likelihood_rating * change_type + (1 | workerId) + (1 | image), data=rensink_RTs_likelihood_no_NA)
+summary(fit_log)
+
+corr <- rensink_RTs_likelihood_no_NA %>% 
+  group_by(image) %>% 
+  dplyr::summarize(detection_rt = mean(detection_rt), likelihood_rating = mean(likelihood_rating))
+
+corr <- left_join(corr, rensink_change_type, by = "image")
+
+corr$log <- log10(corr$detection_rt)
+
+corr %>%
+  ggscatter(y = "log", x = "likelihood_rating", ylab = "Log Change Detection RT (sec)", xlab = "Likelihood of Detecting Change", add = "reg.line", cor.coef = TRUE, cor.coeff.args = list(method = "pearson", label.x = 1, label.y = 1.2), conf.int = TRUE, xlim = c(1, 5), ylim = c(0.8, 1.2))
+
+corr %>%
+  ggscatter(y = "log", x = "likelihood_rating", color = "change_type", palette = c("#0d2240", "#00a8e1", "#f7a800", "#E31818", "#dfdddc"), ylab = "Log Change Detection RT (sec)", xlab = "Likelihood of Detecting Change", add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(.8, 1.2)) + stat_cor(aes(color = change_type), label.x = 1, label.y = c(1.1, 1.15, 1.2), method = "pearson")
+
+corr %>% 
+  ggboxplot(x = "change_type", y = "log", label = "image", font.label = c(5, "plain", "black"))
+```

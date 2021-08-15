@@ -1,0 +1,228 @@
+---
+title: "Combined Stimulus Sets Meta-Awareness"
+author: "Adam Barnas"
+#date: '`r Sys.Date()`'
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(lme4)
+library(lmerTest)
+library(irrNA)
+library(psy)
+library(coefficientalpha)
+library(parameters)
+```
+
+# Set the R working drectory to the main experiment directory.
+
+```{r message=FALSE}
+setwd("/Users/adambarnas/Box/MetaAwareness/data/")  
+```
+
+# Read in Attempt 1 data files.
+
+```{r warning=FALSE}
+ma_semantic <- list.files(path = "./Ma_Semantic/Attempt_1", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(ma_semantic %>% distinct(workerId,.keep_all = FALSE))
+ma_semantic_images = subset(ma_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(ma_semantic_images))
+ma_semantic_images <- ma_semantic_images[, c(col_idx, (1:ncol(ma_semantic_images))[-col_idx])]
+ma_semantic_images <- data.frame(na.omit(ma_semantic_images))
+ma_semantic_images <- subset(ma_semantic_images, image_a != "")
+ma_semantic_images <- ma_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+ma_semantic_images$image <- lapply(ma_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(ma_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_images$database <- "ma"
+ma_semantic_images <- ma_semantic_images %>%  
+    mutate(image = as.character(image))
+
+ma_semantic_cow = subset(ma_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(ma_semantic_cow))
+ma_semantic_cow <- ma_semantic_cow[, c(col_idx, (1:ncol(ma_semantic_cow))[-col_idx])]
+ma_semantic_cow <- data.frame(na.omit(ma_semantic_cow))
+ma_semantic_cow$database <- "ma"
+ma_semantic_cow$image <- "cow"
+colnames(ma_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_cow <- ma_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+ma_semantic_airplane = subset(ma_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(ma_semantic_airplane))
+ma_semantic_airplane <- ma_semantic_airplane[, c(col_idx, (1:ncol(ma_semantic_airplane))[-col_idx])]
+ma_semantic_airplane <- data.frame(na.omit(ma_semantic_airplane))
+ma_semantic_airplane$database <- "ma"
+ma_semantic_airplane$image <- "airplane"
+colnames(ma_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_airplane <- ma_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+ma_semantic_final_1 <- rbind(ma_semantic_images, ma_semantic_cow, ma_semantic_airplane)
+ma_semantic_final_1 <- ma_semantic_final_1 %>% 
+  arrange(workerId)
+write.csv(ma_semantic_final_1,'ma_descriptions_attempt_1_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 2 data files.
+
+```{r warning=FALSE}
+ma_semantic <- list.files(path = "./Ma_Semantic/Attempt_2", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(ma_semantic %>% distinct(workerId,.keep_all = FALSE))
+ma_semantic_images = subset(ma_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(ma_semantic_images))
+ma_semantic_images <- ma_semantic_images[, c(col_idx, (1:ncol(ma_semantic_images))[-col_idx])]
+ma_semantic_images <- data.frame(na.omit(ma_semantic_images))
+ma_semantic_images <- subset(ma_semantic_images, image_a != "")
+ma_semantic_images <- ma_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+ma_semantic_images$image <- lapply(ma_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(ma_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_images$database <- "ma"
+ma_semantic_images <- ma_semantic_images %>%  
+    mutate(image = as.character(image))
+
+ma_semantic_cow = subset(ma_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(ma_semantic_cow))
+ma_semantic_cow <- ma_semantic_cow[, c(col_idx, (1:ncol(ma_semantic_cow))[-col_idx])]
+ma_semantic_cow <- data.frame(na.omit(ma_semantic_cow))
+ma_semantic_cow$database <- "ma"
+ma_semantic_cow$image <- "cow"
+colnames(ma_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_cow <- ma_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+ma_semantic_airplane = subset(ma_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(ma_semantic_airplane))
+ma_semantic_airplane <- ma_semantic_airplane[, c(col_idx, (1:ncol(ma_semantic_airplane))[-col_idx])]
+ma_semantic_airplane <- data.frame(na.omit(ma_semantic_airplane))
+ma_semantic_airplane$database <- "ma"
+ma_semantic_airplane$image <- "airplane"
+colnames(ma_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_airplane <- ma_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+ma_semantic_final_2 <- rbind(ma_semantic_images, ma_semantic_cow, ma_semantic_airplane)
+ma_semantic_final_2 <- ma_semantic_final_2 %>% 
+  arrange(workerId)
+write.csv(ma_semantic_final_2,'ma_descriptions_attempt_2_w_catch.csv', row.names=FALSE)
+```
+
+# Read in Attempt 3 data files.
+
+```{r warning=FALSE}
+ma_semantic <- list.files(path = "./Ma_Semantic/Attempt_3", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(ma_semantic %>% distinct(workerId,.keep_all = FALSE))
+ma_semantic_images = subset(ma_semantic, select = c(trial_response_rt,image_1_text,image_2_text,workerId,image_a))
+col_idx <- grep("workerId", names(ma_semantic_images))
+ma_semantic_images <- ma_semantic_images[, c(col_idx, (1:ncol(ma_semantic_images))[-col_idx])]
+ma_semantic_images <- data.frame(na.omit(ma_semantic_images))
+ma_semantic_images <- subset(ma_semantic_images, image_a != "")
+ma_semantic_images <- ma_semantic_images %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+ma_semantic_images$image <- lapply(ma_semantic_images$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+colnames(ma_semantic_images) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_images$database <- "ma"
+ma_semantic_images <- ma_semantic_images %>%  
+    mutate(image = as.character(image))
+
+ma_semantic_cow = subset(ma_semantic, select = c(workerId,Cow_response_rt,Cow_a_text,Cow_b_text))
+col_idx <- grep("workerId", names(ma_semantic_cow))
+ma_semantic_cow <- ma_semantic_cow[, c(col_idx, (1:ncol(ma_semantic_cow))[-col_idx])]
+ma_semantic_cow <- data.frame(na.omit(ma_semantic_cow))
+ma_semantic_cow$database <- "ma"
+ma_semantic_cow$image <- "cow"
+colnames(ma_semantic_cow) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_cow <- ma_semantic_cow %>%  
+    mutate(image = as.character(image))
+
+
+ma_semantic_airplane = subset(ma_semantic, select = c(workerId,Airplane_response_rt,Airplane_a_text,Airplane_b_text))
+col_idx <- grep("workerId", names(ma_semantic_airplane))
+ma_semantic_airplane <- ma_semantic_airplane[, c(col_idx, (1:ncol(ma_semantic_airplane))[-col_idx])]
+ma_semantic_airplane <- data.frame(na.omit(ma_semantic_airplane))
+ma_semantic_airplane$database <- "ma"
+ma_semantic_airplane$image <- "airplane"
+colnames(ma_semantic_airplane) <- c("workerId", "RT", "image_1_text", "image_2_text", "database", "image")
+ma_semantic_airplane <- ma_semantic_airplane %>%  
+    mutate(image = as.character(image))
+
+ma_semantic_final_3 <- rbind(ma_semantic_images, ma_semantic_cow, ma_semantic_airplane)
+ma_semantic_final_3 <- ma_semantic_final_3 %>% 
+  arrange(workerId)
+write.csv(ma_semantic_final_3,'ma_descriptions_attempt_3_w_catch.csv', row.names=FALSE)
+```
+
+# Combine data files.
+
+```{r}
+ma_semantic_all<- rbind(ma_semantic_final_1, ma_semantic_final_2, ma_semantic_final_3)
+ma_semantic_all <- ma_semantic_all %>% 
+  filter(image != 'airplane' & image != 'cow')
+
+ma_semantic_all_count <- ma_semantic_all %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+ma_semantic_all_count <- data.frame(count = colSums(ma_semantic_all_count[,2:70], na.rm = TRUE))
+ma_semantic_all_count <- tibble::rownames_to_column(ma_semantic_all_count, "image")
+ma_semantic_all_count
+```
+
+# Filter good subjects.
+
+```{r message=FALSE}
+ma_semantic_good <- read_csv("Ma_Semantic_good.csv")
+ma_semantic_final_descriptions <- ma_semantic_all %>% 
+      filter(ma_semantic_all$workerId %in% ma_semantic_good$workerId)
+nrow(ma_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE))
+
+ma_semantic_final_descriptions_count <- ma_semantic_final_descriptions %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+ma_semantic_final_descriptions_count <- data.frame(count = colSums(ma_semantic_final_descriptions_count[,2:70], na.rm = TRUE))
+ma_semantic_final_descriptions_count <- tibble::rownames_to_column(ma_semantic_final_descriptions_count, "image")
+ma_semantic_final_descriptions_count
+ma_semantic_final_descriptions_count <- ma_semantic_final_descriptions_count %>% 
+  arrange(count)
+ma_semantic_final_descriptions_count
+ma_semantic_final_descriptions_count$stim_set <- "ma"
+write.csv(ma_semantic_final_descriptions_count, 'ma_semantic_final_descriptions_count.csv', row.names=FALSE)
+
+ma_semantic_final_descriptions <- ma_semantic_final_descriptions[, -c(1,2)]
+ma_semantic_final_descriptions <- ma_semantic_final_descriptions %>% 
+  arrange(image)
+ma_semantic_final_descriptions$number <- ave(ma_semantic_final_descriptions$image_1_text, ma_semantic_final_descriptions$image, FUN = seq_along)
+write.csv(ma_semantic_final_descriptions,'ma_semantic_final_descriptions.csv', row.names=FALSE)
+```

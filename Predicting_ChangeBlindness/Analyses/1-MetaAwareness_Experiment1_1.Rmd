@@ -1,0 +1,950 @@
+---
+title: "MetaAwarness - Experiment 1 - Task 1"
+author: "Adam Barnas"
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(lme4)
+library(lmerTest)
+library(irrNA)
+library(psy)
+library(coefficientalpha)
+library(parameters)
+library(dplyr)
+```
+
+# Change blindness (mudsplash) data.
+
+## Rensink.
+
+### Read-in datafiles.
+
+```{r message=FALSE}
+rensink_CB_all <- list.files(path = "/Volumes/Files/Box/Archive/ChangeBlindness_Mudsplash/Raw_Data/Rensink/", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read_csv(.))
+rensink_CB_all <- data.frame(rensink_CB_all)
+```
+
+Get a count of the number of subjects.
+
+``` {r}
+nrow(rensink_CB_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Rename the catch trials to the same convention as the main trials and break apart the ``unmod_image`` column into database (the lab where the stims come from) and image (the name of the image file).
+
+```{r warning=FALSE}
+rensink_CB_all$unmod_image[rensink_CB_all$unmod_image == "catchAirplane-a"] <- "rensink_catchAirplane-a"
+rensink_CB_all$unmod_image[rensink_CB_all$unmod_image == "catchBoat-a"] <- "rensink_catchBoat-a"
+rensink_CB_all$unmod_image[rensink_CB_all$unmod_image == "catchCow-a"] <- "rensink_catchCow-a"
+rensink_CB_all$unmod_image <- lapply(rensink_CB_all$unmod_image, gsub, pattern='-a', replacement='')
+rensink_CB_all <- rensink_CB_all %>%
+separate(unmod_image,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+#head(rensink_CB_all,10)
+```
+
+Get the initial count for each image.
+
+``` {r warning=FALSE}
+rensink_CB_all_counts <- rensink_CB_all %>%
+  group_by(workerId,image) %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow") %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+rensink_CB_image_count_initial <- data.frame(image_count = colSums(rensink_CB_all_counts[,2:49], na.rm = TRUE))
+knitr::kable(rensink_CB_image_count_initial)
+```  
+
+### Analyze accuracy.
+
+In this chunk, every click for a given image is compared to the image difference hull. The process involves the addition of two arrays - (1) the difference hull array and (2) an array created by the script and the subject's click. The difference hull array is composed of 0s and 1s, with 1s corresponding to the changing object. An equally sized array of all 0s is composed, with one 1 corresponding to the X,Y coordinates of the click. These two arrays are added together and the maximum value is queried. A maximum value of 2 indicates that the click occurred within the boundaries of the image difference hall (an accurate click). A values less than 2 indicates that the click occurred outside the boundaries of the image difference hall (an inaccurate click). In the new click_acc column, 1s correspond to accurate clicks and 0s correspond to inaccurate clicks. This will analyze the accuracy for the 2 practice images, all main images, and the 1 catch image.
+
+```{r}
+rensink_img_train <- list.files(path = "/Volumes/Files/Box/Archive/ChangeBlindness_Mudsplash/Stimuli/Boxes/Rensink/", pattern = ".png", all.files = TRUE,full.names = TRUE,no.. = TRUE)
+rensink_img_array <- readPNG(rensink_img_train)
+rensink_img_list <- lapply(rensink_img_train, readPNG)
+rensink_img_names <- row.names(rensink_CB_image_count_initial)
+rensink_img_names <- c("catchAirplane", "catchBoat", "catchCow", rensink_img_names)
+names(rensink_img_list) = rensink_img_names
+
+rensink_CB_all$x[rensink_CB_all$x == "0"] <- 1
+rensink_CB_all$y[rensink_CB_all$y == "0"] <- 1
+
+rensink_CB_all$click_acc= "filler"
+
+for (i in 1:length(rensink_CB_all$workerId)){
+  rensink_img <- data.frame(rensink_img_list[rensink_CB_all$image[i]])
+  rensink_blank <- data.frame(array(c(0,0), dim = c(nrow(rensink_img),ncol(rensink_img))))
+  rensink_blank[rensink_CB_all$y[i], rensink_CB_all$x[i]] <- 1
+  rensink_combo <- rensink_img + rensink_blank
+  which(rensink_combo==2, arr.ind=TRUE)
+  if (max(rensink_combo, na.rm=TRUE) == 2){
+    rensink_CB_all$click_acc[i] = 1
+  } else {
+    rensink_CB_all$click_acc[i] = 0
+  }
+}  
+```
+
+#### Catch trial.
+
+```{r}
+rensink_CB_all_catch_acc <- rensink_CB_all %>%
+  filter(image == "catchCow")
+rensink_CB_bad_catch_acc <- rensink_CB_all_catch_acc %>%
+  filter(click_acc == 0)
+rensink_CB_good_catch_acc <- rensink_CB_all_catch_acc %>%
+  filter(click_acc == 1)
+
+rensink_CB_bad_catch_acc <- rensink_CB_all[(rensink_CB_all$workerId %in% rensink_CB_bad_catch_acc$workerId),]
+nrow(rensink_CB_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+rensink_CB_good_catch_acc <- rensink_CB_all[(rensink_CB_all$workerId %in% rensink_CB_good_catch_acc$workerId),]
+nrow(rensink_CB_good_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Main trials.
+
+```{r}
+rensink_CB_good_catch_acc_all_main_acc <- rensink_CB_good_catch_acc %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow")
+rensink_CB_good_catch_acc_all_main_acc_counts <- rensink_CB_good_catch_acc_all_main_acc %>%
+  group_by(workerId,click_acc) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(click_acc,counts) %>%
+  mutate(total = rowSums(.[2:3], na.rm = TRUE))
+colnames(rensink_CB_good_catch_acc_all_main_acc_counts) <- c("workerId", "inacc", "acc", "total")
+```
+
+Remove inaccurate trials.
+
+```{r}
+rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed <- rensink_CB_good_catch_acc_all_main_acc %>% 
+  filter(click_acc == 1)
+```
+
+Compute overall accuracy.
+
+```{r}
+(nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed)/nrow(rensink_CB_good_catch_acc_all_main_acc))*100
+nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% distinct(workerId,.keep_all = FALSE))
+
+```
+
+### Analyze CB log RTs.
+
+Convert raw RTs to log-transformed RTs
+
+```{r}
+rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s = rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt/1000
+rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed$log_rt = log10(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s)
+```
+
+Trial timer maxed out at 60 sec. Any RTs recorded as 60 sec should be discarded.
+
+```{r}
+rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed <- rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% 
+  filter(rt < 60000)
+```
+
+Count the number of 'time out' trials.
+
+```{r}
+nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)
+
+(nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed))/nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed)*100
+```
+
+#### Remove RTs +/- 3 SDs from mean based on worker ID. 
+
+Two additional columns are added to the data table. First, an "outliers" column is added that labels an RT as an outlier or not (0 = not an outlier, 1 = an outlier less than 3 SDs, 2 = an outlier greater than 3 SDs). Second, a "removed_RT" column is added that contains non-outlier RTs.
+
+```{r}
+rensink_correct.trials <- rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed[rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed$click_acc == "1",]
+rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed <- ddply(rensink_correct.trials, .(workerId), function(rensink){
+  rensink_m <- mean(rensink$log_rt)
+  rensink_s <- sd(rensink$log_rt)
+  rensink_upper <- rensink_m + 3*rensink_s #change 3 with another number to increase or decrease cutoff criteria
+  rensink_lower <- rensink_m - 3*rensink_s #change 3 with another number to increase or decrease cutoff criteria
+
+  rensink$outliers <- 0
+  rensink$outliers[rensink$log_rt > rensink_upper] <- 2
+  rensink$outliers[rensink$log_rt < rensink_lower] <- 1
+  rensink$removed_RT <- rensink$log_rt
+  rensink$removed_RT[rensink$log_rt > rensink_upper]<- NA #change NA with upper to replace an outlier with the upper cutoff
+  rensink$removed_RT[rensink$log_rt < rensink_lower]<- NA #change NA with lower to replace an outlier with the lower cutoff
+  
+  rensink
+})
+```
+
+Toss out the outlier trials (labeled as NA).
+
+```{r}
+rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed <- rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed[!is.na(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed$removed_RT),]
+
+write.csv(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed, "rensink_CB_final.csv", row.names=FALSE)
+```
+
+Count the number of trials that are removed.
+
+```{r}
+nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)
+
+(nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed))/nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed)*100
+```
+
+### Summary statistics.
+
+Confirm how many subjects we're working with.
+
+``` {r}
+nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Plot the results.
+
+This is a plot of the mean detection RT for each image.
+
+```{r}
+rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  ggbarplot(x = "image", y = "log_rt", ylab = "Log CB Duration", xlab = "Image", fill = "#f7a800", add = "mean_se", ylim = c(0,1.2), font.xtickslab = 8, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+```
+
+This table contains the final count for each image. This is after RTs were excluded that were more than 3 SDs from the mean.
+
+```{r}
+rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts <- rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+rensink_image_count_final <- data.frame(image_count = colSums(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts[,2:49], na.rm = TRUE))
+knitr::kable(rensink_image_count_final)
+```
+
+## Ma
+
+### Read-in datafiles.
+
+```{r message=FALSE}
+ma_CB_all <- list.files(path = "/Volumes/Files/Box/Archive/ChangeBlindness_Mudsplash/Raw_Data/Ma/", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read_csv(.))
+ma_CB_all <- data.frame(ma_CB_all)
+```
+
+Get a count of the number of subjects.
+
+``` {r}
+nrow(ma_CB_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Rename the catch trials to the same convention as the main trials and break apart the ``unmod_image`` column into database (the lab where the stims come from) and image (the name of the image file).
+
+```{r warning=FALSE}
+ma_CB_all$unmod_image[ma_CB_all$unmod_image == "catchAirplane-a"] <- "ma_catchAirplane-a"
+ma_CB_all$unmod_image[ma_CB_all$unmod_image == "catchBoat-a"] <- "ma_catchBoat-a"
+ma_CB_all$unmod_image[ma_CB_all$unmod_image == "catchCow-a"] <- "ma_catchCow-a"
+ma_CB_all$unmod_image <- lapply(ma_CB_all$unmod_image, gsub, pattern='-a', replacement='')
+ma_CB_all <- ma_CB_all %>%
+separate(unmod_image,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+#head(ma_CB_all,10)
+```
+
+Get the initial count for each image.
+
+``` {r warning=FALSE}
+ma_CB_all_counts <- ma_CB_all %>%
+  group_by(workerId,image) %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow") %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+ma_CB_image_count_initial <- data.frame(image_count = colSums(ma_CB_all_counts[,2:70], na.rm = TRUE))
+knitr::kable(ma_CB_image_count_initial)
+```  
+
+### Analyze accuracy.
+
+In this chunk, every click for a given image is compared to the image difference hull. The process involves the addition of two arrays - (1) the difference hull array and (2) an array created by the script and the subject's click. The difference hull array is composed of 0s and 1s, with 1s corresponding to the changing object. An equally sized array of all 0s is composed, with one 1 corresponding to the X,Y coordinates of the click. These two arrays are added together and the maximum value is queried. A maximum value of 2 indicates that the click occurred within the boundaries of the image difference hall (an accurate click). A values less than 2 indicates that the click occurred outside the boundaries of the image difference hall (an inaccurate click). In the new click_acc column, 1s correspond to accurate clicks and 0s correspond to inaccurate clicks. This will analyze the accuracy for the 2 practice images, all main images, and the 1 catch image.
+
+```{r}
+ma_img_train <- list.files(path = "/Volumes/Files/Box/Archive/ChangeBlindness_Mudsplash/Stimuli/Boxes/Ma/", pattern = ".png", all.files = TRUE,full.names = TRUE,no.. = TRUE)
+ma_img_array <- readPNG(ma_img_train)
+ma_img_list <- lapply(ma_img_train, readPNG)
+ma_img_names <- row.names(ma_CB_image_count_initial)
+ma_img_names <- c("catchAirplane", "catchBoat", "catchCow", ma_img_names)
+names(ma_img_list) = ma_img_names
+
+ma_CB_all$x[ma_CB_all$x == "0"] <- 1
+ma_CB_all$y[ma_CB_all$y == "0"] <- 1
+
+ma_CB_all$click_acc= "filler"
+
+for (i in 1:length(ma_CB_all$workerId)){
+  ma_img <- data.frame(ma_img_list[ma_CB_all$image[i]])
+  ma_blank <- data.frame(array(c(0,0), dim = c(nrow(ma_img),ncol(ma_img))))
+  ma_blank[ma_CB_all$y[i], ma_CB_all$x[i]] <- 1
+  ma_combo <- ma_img + ma_blank
+  which(ma_combo==2, arr.ind=TRUE)
+  if (max(ma_combo, na.rm=TRUE) == 2){
+    ma_CB_all$click_acc[i] = 1
+  } else {
+    ma_CB_all$click_acc[i] = 0
+  }
+}  
+```
+
+#### Catch trial.
+
+```{r}
+ma_CB_all_catch_acc <- ma_CB_all %>%
+  filter(image == "catchCow")
+ma_CB_bad_catch_acc <- ma_CB_all_catch_acc %>%
+  filter(click_acc == 0)
+ma_CB_good_catch_acc <- ma_CB_all_catch_acc %>%
+  filter(click_acc == 1)
+
+ma_CB_bad_catch_acc <- ma_CB_all[(ma_CB_all$workerId %in% ma_CB_bad_catch_acc$workerId),]
+nrow(ma_CB_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+ma_CB_good_catch_acc <- ma_CB_all[(ma_CB_all$workerId %in% ma_CB_good_catch_acc$workerId),]
+nrow(ma_CB_good_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Main trials.
+
+```{r}
+ma_CB_good_catch_acc_all_main_acc <- ma_CB_good_catch_acc %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow")
+ma_CB_good_catch_acc_all_main_acc_counts <- ma_CB_good_catch_acc_all_main_acc %>%
+  group_by(workerId,click_acc) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(click_acc,counts) %>%
+  mutate(total = rowSums(.[2:3], na.rm = TRUE))
+colnames(ma_CB_good_catch_acc_all_main_acc_counts) <- c("workerId", "inacc", "acc", "total")
+```
+
+Remove inaccurate trials.
+
+```{r}
+ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed <- ma_CB_good_catch_acc_all_main_acc %>% 
+  filter(click_acc == 1)
+```
+
+Compute overall accuracy.
+
+```{r}
+(nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed)/nrow(ma_CB_good_catch_acc_all_main_acc))*100
+nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Analyze CB log RTs.
+
+Convert raw RTs to log-transformed RTs
+
+```{r}
+ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s = ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt/1000
+ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed$log_rt = log10(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s)
+```
+
+Trial timer maxed out at 60 sec. Any RTs recorded as 60 sec should be discarded.
+
+```{r}
+ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed <- ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% 
+  filter(rt < 60000)
+```
+
+Count the number of 'time out' trials.
+
+```{r}
+nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)
+
+(nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed))/nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed)*100
+```
+
+#### Remove RTs +/- 3 SDs from mean based on worker ID. 
+
+Two additional columns are added to the data table. First, an "outliers" column is added that labels an RT as an outlier or not (0 = not an outlier, 1 = an outlier less than 3 SDs, 2 = an outlier greater than 3 SDs). Second, a "removed_RT" column is added that contains non-outlier RTs.
+
+```{r}
+ma_correct.trials <- ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed[ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed$click_acc == "1",]
+ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed <- ddply(ma_correct.trials, .(workerId), function(ma){
+  ma_m <- mean(ma$log_rt)
+  ma_s <- sd(ma$log_rt)
+  ma_upper <- ma_m + 3*ma_s #change 3 with another number to increase or decrease cutoff criteria
+  ma_lower <- ma_m - 3*ma_s #change 3 with another number to increase or decrease cutoff criteria
+
+  ma$outliers <- 0
+  ma$outliers[ma$log_rt > ma_upper] <- 2
+  ma$outliers[ma$log_rt < ma_lower] <- 1
+  ma$removed_RT <- ma$log_rt
+  ma$removed_RT[ma$log_rt > ma_upper]<- NA #change NA with upper to replace an outlier with the upper cutoff
+  ma$removed_RT[ma$log_rt < ma_lower]<- NA #change NA with lower to replace an outlier with the lower cutoff
+  
+  ma
+})
+```
+
+Toss out the outlier trials (labeled as NA).
+
+```{r}
+ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed <- ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed[!is.na(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed$removed_RT),]
+
+write.csv(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed, "ma_CB_final.csv", row.names=FALSE)
+```
+
+Count the number of trials that are removed.
+
+```{r}
+nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)
+
+(nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed))/nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed)*100
+```
+
+### Summary statistics.
+
+Confirm how many subjects we're working with.
+
+``` {r}
+nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Plot the results.
+
+This is a plot of the mean detection RT for each image.
+
+```{r}
+ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  ggbarplot(x = "image", y = "log_rt", ylab = "Log CB Duration", xlab = "Image", fill = "#f7a800", add = "mean_se", ylim = c(0,1.2), font.xtickslab = 6, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+```
+
+This table contains the final count for each image. This is after RTs were excluded that were more than 3 SDs from the mean.
+
+```{r}
+ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts <- ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+ma_image_count_final <- data.frame(image_count = colSums(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts[,2:70], na.rm = TRUE))
+knitr::kable(ma_image_count_final)
+```
+
+## Wolfe1.
+
+### Read-in datafiles.
+
+```{r message=FALSE}
+wolfe1_CB_all <- list.files(path = "/Volumes/Files/Box/Archive/ChangeBlindness_Mudsplash/Raw_Data/Wolfe1/", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read_csv(.))
+wolfe1_CB_all <- data.frame(wolfe1_CB_all)
+```
+
+Get a count of the number of subjects.
+
+``` {r}
+nrow(wolfe1_CB_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Rename the catch trials to the same convention as the main trials and break apart the ``unmod_image`` column into database (the lab where the stims come from) and image (the name of the image file).
+
+```{r warning=FALSE}
+wolfe1_CB_all$unmod_image[wolfe1_CB_all$unmod_image == "catchAirplane-a"] <- "wolfe1_catchAirplane-a"
+wolfe1_CB_all$unmod_image[wolfe1_CB_all$unmod_image == "catchBoat-a"] <- "wolfe1_catchBoat-a"
+wolfe1_CB_all$unmod_image[wolfe1_CB_all$unmod_image == "catchCow-a"] <- "wolfe1_catchCow-a"
+wolfe1_CB_all$unmod_image <- lapply(wolfe1_CB_all$unmod_image, gsub, pattern='-a', replacement='')
+wolfe1_CB_all <- wolfe1_CB_all %>%
+separate(unmod_image,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+#head(wolfe1_CB_all,10)
+```
+
+Get the initial count for each image.
+
+``` {r warning=FALSE}
+wolfe1_CB_all_counts <- wolfe1_CB_all %>%
+  group_by(workerId,image) %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow") %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe1_CB_image_count_initial <- data.frame(image_count = colSums(wolfe1_CB_all_counts[,2:112], na.rm = TRUE))
+knitr::kable(wolfe1_CB_image_count_initial)
+```  
+
+### Analyze accuracy.
+
+In this chunk, every click for a given image is compared to the image difference hull. The process involves the addition of two arrays - (1) the difference hull array and (2) an array created by the script and the subject's click. The difference hull array is composed of 0s and 1s, with 1s corresponding to the changing object. An equally sized array of all 0s is composed, with one 1 corresponding to the X,Y coordinates of the click. These two arrays are added together and the maximum value is queried. A maximum value of 2 indicates that the click occurred within the boundaries of the image difference hall (an accurate click). A values less than 2 indicates that the click occurred outside the boundaries of the image difference hall (an inaccurate click). In the new click_acc column, 1s correspond to accurate clicks and 0s correspond to inaccurate clicks. This will analyze the accuracy for the 2 practice images, all main images, and the 1 catch image.
+
+```{r}
+wolfe1_img_train <- list.files(path = "/Volumes/Files/Box/Archive/ChangeBlindness_Mudsplash/Stimuli/Boxes/Wolfe1/", pattern = ".png", all.files = TRUE,full.names = TRUE,no.. = TRUE)
+wolfe1_img_array <- readPNG(wolfe1_img_train)
+wolfe1_img_list <- lapply(wolfe1_img_train, readPNG)
+wolfe1_img_names <- row.names(wolfe1_CB_image_count_initial)
+wolfe1_img_names <- c("catchAirplane", "catchBoat", "catchCow", wolfe1_img_names)
+names(wolfe1_img_list) = wolfe1_img_names
+
+wolfe1_CB_all$x[wolfe1_CB_all$x == "0"] <- 1
+wolfe1_CB_all$y[wolfe1_CB_all$y == "0"] <- 1
+
+wolfe1_CB_all$click_acc= "filler"
+
+for (i in 1:length(wolfe1_CB_all$workerId)){
+  wolfe1_img <- data.frame(wolfe1_img_list[wolfe1_CB_all$image[i]])
+  wolfe1_blank <- data.frame(array(c(0,0), dim = c(nrow(wolfe1_img),ncol(wolfe1_img))))
+  wolfe1_blank[wolfe1_CB_all$y[i], wolfe1_CB_all$x[i]] <- 1
+  wolfe1_combo <- wolfe1_img + wolfe1_blank
+  which(wolfe1_combo==2, arr.ind=TRUE)
+  if (max(wolfe1_combo, na.rm=TRUE) == 2){
+    wolfe1_CB_all$click_acc[i] = 1
+  } else {
+    wolfe1_CB_all$click_acc[i] = 0
+  }
+}   
+```
+
+#### Catch trial.
+
+```{r}
+wolfe1_CB_all_catch_acc <- wolfe1_CB_all %>%
+  filter(image == "catchCow")
+wolfe1_CB_bad_catch_acc <- wolfe1_CB_all_catch_acc %>%
+  filter(click_acc == 0)
+wolfe1_CB_good_catch_acc <- wolfe1_CB_all_catch_acc %>%
+  filter(click_acc == 1)
+
+wolfe1_CB_bad_catch_acc <- wolfe1_CB_all[(wolfe1_CB_all$workerId %in% wolfe1_CB_bad_catch_acc$workerId),]
+nrow(wolfe1_CB_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+wolfe1_CB_good_catch_acc <- wolfe1_CB_all[(wolfe1_CB_all$workerId %in% wolfe1_CB_good_catch_acc$workerId),]
+nrow(wolfe1_CB_good_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Main trials.
+
+```{r}
+wolfe1_CB_good_catch_acc_all_main_acc <- wolfe1_CB_good_catch_acc %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow")
+wolfe1_CB_good_catch_acc_all_main_acc_counts <- wolfe1_CB_good_catch_acc_all_main_acc %>%
+  group_by(workerId,click_acc) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(click_acc,counts) %>%
+  mutate(total = rowSums(.[2:3], na.rm = TRUE))
+colnames(wolfe1_CB_good_catch_acc_all_main_acc_counts) <- c("workerId", "inacc", "acc", "total")
+```
+
+Remove inaccurate trials.
+
+```{r}
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed <- wolfe1_CB_good_catch_acc_all_main_acc %>% 
+  filter(click_acc == 1)
+```
+
+Compute overall accuracy.
+
+```{r}
+(nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed)/nrow(wolfe1_CB_good_catch_acc_all_main_acc))*100
+nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% distinct(workerId,.keep_all = FALSE))
+
+```
+
+### Analyze CB log RTs.
+
+Convert raw RTs to log-transformed RTs
+
+```{r}
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s = wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt/1000
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed$log_rt = log10(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s)
+```
+
+Trial timer maxed out at 60 sec. Any RTs recorded as 60 sec should be discarded.
+
+```{r}
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed <- wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% 
+  filter(rt < 60000)
+```
+
+Count the number of 'time out' trials.
+
+```{r}
+nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)
+
+(nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed))/nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed)*100
+```
+
+#### Remove RTs +/- 3 SDs from mean based on worker ID. 
+
+Two additional columns are added to the data table. First, an "outliers" column is added that labels an RT as an outlier or not (0 = not an outlier, 1 = an outlier less than 3 SDs, 2 = an outlier greater than 3 SDs). Second, a "removed_RT" column is added that contains non-outlier RTs.
+
+```{r}
+wolfe1_correct.trials <- wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed[wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed$click_acc == "1",]
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed <- ddply(wolfe1_correct.trials, .(workerId), function(wolfe1){
+  wolfe1_m <- mean(wolfe1$log_rt)
+  wolfe1_s <- sd(wolfe1$log_rt)
+  wolfe1_upper <- wolfe1_m + 3*wolfe1_s #change 3 with another number to increase or decrease cutoff criteria
+  wolfe1_lower <- wolfe1_m - 3*wolfe1_s #change 3 with another number to increase or decrease cutoff criteria
+
+  wolfe1$outliers <- 0
+  wolfe1$outliers[wolfe1$log_rt > wolfe1_upper] <- 2
+  wolfe1$outliers[wolfe1$log_rt < wolfe1_lower] <- 1
+  wolfe1$removed_RT <- wolfe1$log_rt
+  wolfe1$removed_RT[wolfe1$log_rt > wolfe1_upper]<- NA #change NA with upper to replace an outlier with the upper cutoff
+  wolfe1$removed_RT[wolfe1$log_rt < wolfe1_lower]<- NA #change NA with lower to replace an outlier with the lower cutoff
+  
+  wolfe1
+})
+```
+
+Toss out the outlier trials (labeled as NA).
+
+```{r}
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed <- wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed[!is.na(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed$removed_RT),]
+
+write.csv(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed, "wolfe1_CB_final.csv", row.names=FALSE)
+```
+
+Count the number of trials that are removed.
+
+```{r}
+nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)
+
+(nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed))/nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed)*100
+```
+
+### Summary statistics.
+
+Confirm how many subjects we're working with.
+
+``` {r}
+nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Plot the results.
+
+This is a plot of the mean detection RT for each image.
+
+```{r}
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  ggbarplot(x = "image", y = "log_rt", ylab = "Log CB Duration", xlab = "Image", fill = "#f7a800", add = "mean_se", ylim = c(0,1.5), font.xtickslab = 4, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+```
+
+This table contains the final count for each image. This is after RTs were excluded that were more than 3 SDs from the mean.
+
+```{r}
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts <- wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe1_image_count_final <- data.frame(image_count = colSums(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts[,2:112], na.rm = TRUE))
+knitr::kable(wolfe1_image_count_final)
+```
+
+## Wolfe2.
+
+### Read-in datafiles.
+
+```{r message=FALSE}
+wolfe2_CB_all <- list.files(path = "/Volumes/Files/Box/Archive/ChangeBlindness_Mudsplash/Raw_Data/Wolfe2/", pattern = "*.csv", recursive = T, full.names = T, ignore.case = F) %>%
+  map_df(~read_csv(.))
+wolfe2_CB_all <- data.frame(wolfe2_CB_all)
+```
+
+Get a count of the number of subjects.
+
+``` {r}
+nrow(wolfe2_CB_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Rename the catch trials to the same convention as the main trials and break apart the ``unmod_image`` column into database (the lab where the stims come from) and image (the name of the image file).
+
+```{r warning=FALSE}
+wolfe2_CB_all$unmod_image[wolfe2_CB_all$unmod_image == "catchAirplane-a"] <- "wolfe2_catchAirplane-a"
+wolfe2_CB_all$unmod_image[wolfe2_CB_all$unmod_image == "catchBoat-a"] <- "wolfe2_catchBoat-a"
+wolfe2_CB_all$unmod_image[wolfe2_CB_all$unmod_image == "catchCow-a"] <- "wolfe2_catchCow-a"
+wolfe2_CB_all$unmod_image <- lapply(wolfe2_CB_all$unmod_image, gsub, pattern='-a', replacement='')
+wolfe2_CB_all <- wolfe2_CB_all %>%
+separate(unmod_image,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+#head(wolfe2_CB_all,10)
+```
+
+Get the initial count for each image.
+
+``` {r warning=FALSE}
+wolfe2_CB_all_counts <- wolfe2_CB_all %>%
+  group_by(workerId,image) %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow") %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe2_CB_image_count_initial <- data.frame(image_count = colSums(wolfe2_CB_all_counts[,2:255], na.rm = TRUE))
+knitr::kable(wolfe2_CB_image_count_initial)
+```  
+
+### Analyze accuracy.
+
+In this chunk, every click for a given image is compared to the image difference hull. The process involves the addition of two arrays - (1) the difference hull array and (2) an array created by the script and the subject's click. The difference hull array is composed of 0s and 1s, with 1s corresponding to the changing object. An equally sized array of all 0s is composed, with one 1 corresponding to the X,Y coordinates of the click. These two arrays are added together and the maximum value is queried. A maximum value of 2 indicates that the click occurred within the boundaries of the image difference hall (an accurate click). A values less than 2 indicates that the click occurred outside the boundaries of the image difference hall (an inaccurate click). In the new click_acc column, 1s correspond to accurate clicks and 0s correspond to inaccurate clicks. This will analyze the accuracy for the 2 practice images, all main images, and the 1 catch image.
+
+```{r}
+wolfe2_img_train <- list.files(path = "/Volumes/Files/Box/Archive/ChangeBlindness_Mudsplash/Stimuli/Boxes/Wolfe2/", pattern = ".png", all.files = TRUE,full.names = TRUE,no.. = TRUE)
+wolfe2_img_array <- readPNG(wolfe2_img_train)
+wolfe2_img_list <- lapply(wolfe2_img_train, readPNG)
+wolfe2_img_names <- row.names(wolfe2_CB_image_count_initial)
+wolfe2_img_names <- c("catchAirplane", "catchBoat", "catchCow", wolfe2_img_names)
+names(wolfe2_img_list) = wolfe2_img_names
+
+wolfe2_CB_all$x[wolfe2_CB_all$x == "0"] <- 1
+wolfe2_CB_all$y[wolfe2_CB_all$y == "0"] <- 1
+
+wolfe2_CB_all$click_acc= "filler"
+
+for (i in 1:length(wolfe2_CB_all$workerId)){
+  wolfe2_img <- data.frame(wolfe2_img_list[wolfe2_CB_all$image[i]])
+  wolfe2_blank <- data.frame(array(c(0,0), dim = c(nrow(wolfe2_img),ncol(wolfe2_img))))
+  wolfe2_blank[wolfe2_CB_all$y[i], wolfe2_CB_all$x[i]] <- 1
+  wolfe2_combo <- wolfe2_img + wolfe2_blank
+  which(wolfe2_combo==2, arr.ind=TRUE)
+  if (max(wolfe2_combo, na.rm=TRUE) == 2){
+    wolfe2_CB_all$click_acc[i] = 1
+  } else {
+    wolfe2_CB_all$click_acc[i] = 0
+  }
+}  
+```
+
+#### Catch trial.
+
+```{r}
+wolfe2_CB_all_catch_acc <- wolfe2_CB_all %>%
+  filter(image == "catchCow")
+wolfe2_CB_bad_catch_acc <- wolfe2_CB_all_catch_acc %>%
+  filter(click_acc == 0)
+wolfe2_CB_good_catch_acc <- wolfe2_CB_all_catch_acc %>%
+  filter(click_acc == 1)
+
+wolfe2_CB_bad_catch_acc <- wolfe2_CB_all[(wolfe2_CB_all$workerId %in% wolfe2_CB_bad_catch_acc$workerId),]
+nrow(wolfe2_CB_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_CB_good_catch_acc <- wolfe2_CB_all[(wolfe2_CB_all$workerId %in% wolfe2_CB_good_catch_acc$workerId),]
+nrow(wolfe2_CB_good_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+```
+
+#### Main trials.
+
+```{r}
+wolfe2_CB_good_catch_acc_all_main_acc <- wolfe2_CB_good_catch_acc %>%
+  filter(image!= "catchAirplane" & image!= "catchBoat" & image!= "catchCow")
+wolfe2_CB_good_catch_acc_all_main_acc_counts <- wolfe2_CB_good_catch_acc_all_main_acc %>%
+  group_by(workerId,click_acc) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(click_acc,counts) %>%
+  mutate(total = rowSums(.[2:3], na.rm = TRUE))
+colnames(wolfe2_CB_good_catch_acc_all_main_acc_counts) <- c("workerId", "inacc", "acc", "total")
+```
+
+Remove inaccurate trials.
+
+```{r}
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed <- wolfe2_CB_good_catch_acc_all_main_acc %>% 
+  filter(click_acc == 1)
+```
+
+Compute overall accuracy.
+
+```{r}
+(nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed)/nrow(wolfe2_CB_good_catch_acc_all_main_acc))*100
+nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% distinct(workerId,.keep_all = FALSE))
+
+```
+
+### Analyze CB log RTs.
+
+Convert raw RTs to log-transformed RTs
+
+```{r}
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s = wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt/1000
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed$log_rt = log10(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed$rt_s)
+```
+
+Trial timer maxed out at 60 sec. Any RTs recorded as 60 sec should be discarded.
+
+```{r}
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed <- wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% 
+  filter(rt < 60000)
+```
+
+Count the number of 'time out' trials.
+
+```{r}
+nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)
+
+(nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed))/nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed)*100
+```
+
+#### Remove RTs +/- 3 SDs from mean based on worker ID. 
+
+Two additional columns are added to the data table. First, an "outliers" column is added that labels an RT as an outlier or not (0 = not an outlier, 1 = an outlier less than 3 SDs, 2 = an outlier greater than 3 SDs). Second, a "removed_RT" column is added that contains non-outlier RTs.
+
+```{r}
+wolfe2_correct.trials <- wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed[wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed$click_acc == "1",]
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed <- ddply(wolfe2_correct.trials, .(workerId), function(wolfe2){
+  wolfe2_m <- mean(wolfe2$log_rt)
+  wolfe2_s <- sd(wolfe2$log_rt)
+  wolfe2_upper <- wolfe2_m + 3*wolfe2_s #change 3 with another number to increase or decrease cutoff criteria
+  wolfe2_lower <- wolfe2_m - 3*wolfe2_s #change 3 with another number to increase or decrease cutoff criteria
+
+  wolfe2$outliers <- 0
+  wolfe2$outliers[wolfe2$log_rt > wolfe2_upper] <- 2
+  wolfe2$outliers[wolfe2$log_rt < wolfe2_lower] <- 1
+  wolfe2$removed_RT <- wolfe2$log_rt
+  wolfe2$removed_RT[wolfe2$log_rt > wolfe2_upper]<- NA #change NA with upper to replace an outlier with the upper cutoff
+  wolfe2$removed_RT[wolfe2$log_rt < wolfe2_lower]<- NA #change NA with lower to replace an outlier with the lower cutoff
+  
+  wolfe2
+})
+```
+
+Toss out the outlier trials (labeled as NA).
+
+```{r}
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed <- wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed[!is.na(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed$removed_RT),]
+
+write.csv(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed, "wolfe2_CB_final.csv", row.names=FALSE)
+```
+
+Count the number of trials that are removed.
+
+```{r}
+nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)
+
+(nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed))/nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed)*100
+```
+
+### Summary statistics.
+
+Confirm how many subjects we're working with.
+
+``` {r}
+nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Plot the results.
+
+This is a plot of the mean detection RT for each image.
+
+```{r}
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  ggbarplot(x = "image", y = "log_rt", ylab = "Log CB Duration", xlab = "Image", fill = "#f7a800", add = "mean_se", ylim = c(0,1.5), font.xtickslab = 2, sort.val = c("asc")) + rotate_x_text() + theme(legend.position = "none")
+```
+
+This table contains the final count for each image. This is after RTs were excluded that were more than 3 SDs from the mean.
+
+```{r}
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts <- wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe2_image_count_final <- data.frame(image_count = colSums(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed_counts[,2:254], na.rm = TRUE))
+knitr::kable(wolfe2_image_count_final)
+```
+
+### Combined results
+
+Initial number of subjects.
+
+```{r}
+nrow(rensink_CB_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_CB_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_CB_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_CB_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Initial image count.
+
+```{r}
+image_count_initial <- rbind(rensink_CB_image_count_initial, ma_CB_image_count_initial, wolfe1_CB_image_count_initial, wolfe2_CB_image_count_initial)
+mean(image_count_initial$image_count)
+sd(image_count_initial$image_count)
+range(image_count_initial$image_count)
+```
+
+Number of subjects who missed catch trial.
+
+```{r}
+nrow(rensink_CB_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_CB_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_CB_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_CB_bad_catch_acc %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Compute main trail accuracy.
+
+```{r}
+length(which(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed$click_acc==1)) + length(which(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed$click_acc==1)) + length(which(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed$click_acc==1)) + length(which(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed$click_acc==1))
+
+nrow(rensink_CB_good_catch_acc_all_main_acc) + nrow(ma_CB_good_catch_acc_all_main_acc) + nrow(wolfe1_CB_good_catch_acc_all_main_acc) + nrow(wolfe2_CB_good_catch_acc_all_main_acc)
+
+(nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed) + nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed) + nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed) + nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed))/(nrow(rensink_CB_good_catch_acc_all_main_acc) + nrow(ma_CB_good_catch_acc_all_main_acc) + nrow(wolfe1_CB_good_catch_acc_all_main_acc) + nrow(wolfe2_CB_good_catch_acc_all_main_acc))*100
+
+length(which(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed$click_acc==1))
+
+
+CB_final_sample_size <- nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed %>% distinct(workerId,.keep_all = FALSE))
+CB_final_sample_size 
+```
+
+Count the number of 'time out' trials.
+
+```{r}
+(nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)) + (nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)) + (nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)) + (nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed))
+
+((nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)) + (nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)) + (nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)) + (nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed) - nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed)))/(nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed) + nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed) + nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed) + nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed))*100
+```
+
+Count the number of outlier trials that are removed.
+
+```{r}
+wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed$database <- "wolfe1"
+wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed$database <- "wolfe2"
+
+(nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)) + (nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)) + (nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)) + (nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed))
+
+((nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)) + (nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)) + (nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)) + (nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) - nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed)))/(nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) + nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) + nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed) + nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed))*100
+```
+
+Confirm final sample of subjects.
+
+``` {r}
+nrow(rensink_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_CB_good_catch_acc_all_main_acc_inacc_trials_removed_timeout_trials_removed_rts_3SD_trimmed_rts_3SD_removed %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Final image count.
+
+```{r}
+image_count_final <- rbind(rensink_image_count_final, ma_image_count_final, wolfe1_image_count_final, wolfe2_image_count_final)
+mean(image_count_final$image_count)
+sd(image_count_final$image_count)
+range(image_count_final$image_count)
+```

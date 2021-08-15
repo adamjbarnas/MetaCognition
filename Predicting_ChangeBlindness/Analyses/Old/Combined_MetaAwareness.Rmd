@@ -1,0 +1,791 @@
+---
+title: "Combined Stimulus Sets Meta-Awareness"
+author: "Adam Barnas"
+#date: '`r Sys.Date()`'
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(lme4)
+library(lmerTest)
+library(irrNA)
+library(psy)
+library(coefficientalpha)
+library(parameters)
+```
+
+# Set the R working drectory to the main experiment directory.
+
+```{r message=FALSE, warning=FALSE}
+setwd("/Users/adambarnas/Box/MetaAwareness/data/")  
+```
+
+# Read in data files.
+
+```{r message=FALSE, warning=FALSE}
+Rensink_RTs_likelihood_no_NA <- read_csv("Rensink_RTs_likelihood_no_NA.csv")
+Ma_RTs_likelihood_no_NA <- read_csv("Ma_RTs_likelihood_no_NA.csv")
+Wolfe1_RTs_likelihood_no_NA <- read_csv("Wolfe1_RTs_likelihood_no_NA.csv")
+Wolfe2_RTs_likelihood_no_NA <- read_csv("Wolfe2_RTs_likelihood_no_NA.csv")
+
+tbl_all <- rbind(Rensink_RTs_likelihood_no_NA, Ma_RTs_likelihood_no_NA, Wolfe1_RTs_likelihood_no_NA, Wolfe2_RTs_likelihood_no_NA)
+
+Box_and_change_info <- read_csv("Box_and_change_info.csv")
+Box_and_change_info <- Box_and_change_info %>% 
+  filter(!grepl('catch', image)) %>% 
+  separate(image,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+Box_and_change_info$image <- lapply(Box_and_change_info$image, gsub, pattern='-a', replacement='')
+Box_and_change_info$image <- as.character(Box_and_change_info$image)
+tbl_all <- left_join(tbl_all, Box_and_change_info, by = "image")
+```
+
+Get total number of subjects and counts for each stimulus set
+
+``` {r warning=FALSE}
+nrow(tbl_all %>% distinct(workerId,.keep_all = FALSE))
+count <- tbl_all %>%
+  group_by(stim_set) %>%
+  dplyr::summarize(count = n_distinct(workerId)) %>%
+  spread(stim_set,count)
+count
+```
+
+# Compute average likelihood rating.
+
+```{r message=FALSE, warning=FALSE}
+tbl_all_subj_avg <- tbl_all %>%
+  group_by(workerId,image) %>%
+  dplyr::summarize(average = mean(likelihood_rating)) %>%
+  spread(image,average) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(tbl_all_subj_avg$subj_avg)
+```
+
+# Results.
+
+## Some plots.
+
+```{r message=FALSE, warning=FALSE}
+tbl_all$log <- log10(tbl_all$detection_rt)
+
+corr <- tbl_all %>% 
+  group_by(image) %>% 
+  dplyr::summarize(log = mean(log), raw = mean(detection_rt), likelihood_rating = mean(likelihood_rating), change_type = unique(change_type), eccentricity = mean(eccentricity), box_percent = mean(box_percent), change_percent = mean(change_percent))
+
+corr %>% 
+  gghistogram(x = "likelihood_rating", fill = "#f7a800", add = "mean", bins = 7, xlab = ("Likelihood of Detecting Change"), ylab = ("Frequency"), ylim = c(0, 150))
+ggsave("fig_1_rating_histogram.jpg")
+
+corr %>% 
+  gghistogram(x = "log", fill = "#f7a800", add = "mean", bins = 36, ylim = c(0,60), xlim = c(0.7,1.5), xlab = ("Log Change Detection RT (sec)"), ylab = ("Frequency"))
+ggsave("fig_2_log_histogram.jpg")
+
+corr %>% 
+  gghistogram(x = "raw", fill = "#f7a800", add = "mean", bins = 36, ylim = c(0,80), xlim = c(0,30), xlab = ("Raw Change Detection RT (sec)"), ylab = ("Frequency"))
+ggsave("fig_3_raw_histogram.jpg")
+
+corr %>% 
+  ggboxplot(x = "change_type", y = "log", label = "image", font.label = c(5, "plain", "black"), ylab = ("Log Change Detection RT (sec)"), xlab = "Change Type", ylim = c(0.75,1.4))
+ggsave("fig_4_log_changetype.jpg")
+
+corr %>% 
+  ggboxplot(x = "change_type", y = "raw", label = "image", font.label = c(5, "plain", "black"), ylab = ("Raw Change Detection RT (sec)"), xlab = "Change Type", ylim = c(5,30))
+ggsave("fig_5_raw_changetype.jpg")
+```
+
+## Mixed effects modeling.
+
+### Likelihood rating predicting change blindness duration.
+
+fit_log1 = Does likelihood rating predict log change blindness duration? A: Yes.
+fit_raw1 = Does likelihood rating predict raw change blindness duration? A: Yes.
+
+```{r message=FALSE, warning=FALSE}
+fit_log1 <- lmer(log ~ likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all)
+summary(fit_log1)
+ci(fit_log1)
+
+corr %>%
+  ggscatter(y = "log", x = "likelihood_rating", ylab = "Log Change Detection RT (sec)", xlab = "Likelihood of Detecting Change", add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(0.75, 1.4))
+ggsave("fig_6_likelihood_predict_log.jpg")
+
+corr1 <- cor.test(corr$log, corr$likelihood_rating, method = c("pearson"))
+corr1
+
+fit_raw1 <- lmer(detection_rt ~ likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all)
+summary(fit_raw1)
+ci(fit_raw1)
+
+corr %>%
+  ggscatter(y = "raw", x = "likelihood_rating", ylab = "Raw Change Detection RT (sec)", xlab = "Likelihood of Detecting Change", add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(5, 30))
+ggsave("fig_7_likelihood_predict_raw.jpg")
+```
+
+Conclusion: Yes, ratings of change blindness ability predict change blindness duration.
+
+### Image-related properties predicting change blindness duration.
+
+fit_log2 = Do image-related properties (size of change, eccentricity, and change type) predict log change blindness duration? A: Yes.
+fit_raw2 = Do image-related properties (size of change, eccentricity, and change type) predict raw change blindness duration? A: Yes.
+
+```{r message=FALSE, warning=FALSE}
+fit_log2 <- lmer(log ~ change_percent + eccentricity + change_type + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all)
+summary(fit_log2)
+ci(fit_log2)
+
+corr %>%
+  ggscatter(y = "log", x = "change_percent", ylab = "Log Change Detection RT (sec)", xlab = "Size of Change (% of total image)", add = "reg.line", conf.int = TRUE, ylim = c(0.7, 1.40), xlim = c(0,25))
+ggsave("fig_8_changesize_predict_log.jpg")
+
+corr %>%
+  ggscatter(y = "log", x = "eccentricity", ylab = "Log Change Detection RT (sec)", xlab = "Eccentricity (distance in pixels)", add = "reg.line", conf.int = TRUE, ylim = c(0.7, 1.40), xlim = c(0,500))
+ggsave("fig_9_eccentricity_predict_log.jpg")
+
+corr %>% 
+  ggboxplot(x = "change_type", y = "log", ylab = ("Log Change Detection RT (sec)"), ylim = c(0.7,1.40), xlab = "Change Type")
+ggsave("fig_10_changetype_predict_log.jpg")
+
+fit_raw2 <- lmer(detection_rt ~ change_percent + eccentricity + change_type + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all)
+summary(fit_raw2)
+ci(fit_raw2)
+
+corr %>%
+  ggscatter(y = "raw", x = "change_percent", ylab = "Raw Change Detection RT (sec)", xlab = "Size of Change (% of total image)", add = "reg.line", conf.int = TRUE, ylim = c(0, 30), xlim = c(0,25))
+ggsave("fig_11_changesize_predict_raw.jpg")
+
+corr %>%
+  ggscatter(y = "raw", x = "eccentricity", ylab = "Raw Change Detection RT (sec)", xlab = "Eccentricity (distance in pixels)", add = "reg.line", conf.int = TRUE, ylim = c(0, 30), xlim = c(0,500))
+ggsave("fig_12_eccentricity_predict_raw.jpg")
+
+corr %>% 
+  ggboxplot(x = "change_type", y = "raw", ylab = ("Raw Change Detection RT (sec)"), ylim = c(0,30), xlab = "Change Type")
+ggsave("fig_13_changetype_predict_raw.jpg")
+```
+
+Conclusion: Yes, the size of the change, the eccentricity of the change, and the type of change predict change blindness duration.
+
+### Image-related properties predicting likelihood ratings.
+
+fit_likelihood = Do image-related properties (size of box, size of change, eccentricity, and change type) predict likelihood ratings? A: No.
+
+```{r message=FALSE, warning=FALSE}
+fit_likelihood <- lmer(likelihood_rating ~ box_percent + change_percent + eccentricity + change_type + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all)
+summary(fit_likelihood)
+ci(fit_likelihood)
+
+corr %>%
+  ggscatter(y = "likelihood_rating", x = "box_percent", ylab = "Likelihood of Detecting Change", xlab = "Size of box (% of total image)", add = "reg.line", conf.int = TRUE, ylim = c(1, 5), xlim = c(0,45))
+ggsave("fig_14_boxsize_predict_ratng.jpg")
+
+corr %>%
+  ggscatter(y = "likelihood_rating", x = "change_percent", ylab = "Likelihood of Detecting Change", xlab = "Size of change (% of total image)", add = "reg.line", conf.int = TRUE, ylim = c(1, 5), xlim = c(0,25))
+ggsave("fig_15_changesize_predict_ratng.jpg")
+
+corr %>%
+  ggscatter(y = "likelihood_rating", x = "eccentricity", ylab = "Likelihood of Detecting Change", xlab = "Eccentricity (distance in pixels)", add = "reg.line", conf.int = TRUE, ylim = c(1, 5), xlim = c(0,500))
+ggsave("fig_16_eccentricity_predict_ratng.jpg")
+
+corr %>% 
+  ggboxplot(x = "change_type", y = "likelihood_rating", ylab = ("Likelihood of Detecting Change"), ylim = c(1,5), xlab = "Change Type")
+ggsave("fig_17_changetype_predict_ratng.jpg")
+```
+
+Conclusion: No, image-related properties do not predict likelihood ratings.
+
+### Likelihood ratings and image-related properties predicting change blindness duration.
+
+fit_log3 = Do likelihood ratings and image-related properties (size of change, eccentricity, and change type) predict log change blindness duration? A: Yes.
+fit_raw3 = Do likelihood ratings and image-related properties (size of change, eccentricity, and change type) predict raw change blindness duration? A: Yes.
+
+```{r message=FALSE, warning=FALSE}
+fit_log3 <- lmer(log ~ likelihood_rating + change_percent + eccentricity + change_type + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all)
+summary(fit_log3)
+ci(fit_log3)
+
+fit_raw3 <- lmer(detection_rt ~ likelihood_rating + change_percent + eccentricity + change_type + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all)
+summary(fit_raw3)
+ci(fit_raw3)
+```
+
+### Model comparisons.
+
+Do likelihood ratings better predict change blindness duration beyond what is predicted from image-related properties (change size, eccentricity, and change type) alone?
+
+Size of change. A: Yes.
+
+```{r message=FALSE, warning=FALSE}
+model1a_log <- lmer(log ~  change_percent + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model1a_log)
+model1b_log <- lmer(log ~  change_percent + likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model1b_log)
+anova(model1a_log,model1b_log)
+
+model2a_raw <- lmer(detection_rt ~  change_percent + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model2a_raw)
+model2b_raw <- lmer(detection_rt ~  change_percent + likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model2b_raw)
+anova(model2a_raw,model2b_raw)
+```
+
+Eccentricity. A: Yes.
+
+```{r message=FALSE, warning=FALSE}
+model3a_log <- lmer(log ~  eccentricity + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model3a_log)
+model3b_log <- lmer(log ~  eccentricity + likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model3b_log)
+anova(model3a_log,model3b_log)
+
+model4a_raw <- lmer(detection_rt ~  eccentricity + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model4a_raw)
+model4b_raw <- lmer(detection_rt ~  eccentricity + likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model4b_raw)
+anova(model4a_raw,model4b_raw)
+```
+
+Type of change. A: Yes.
+
+```{r message=FALSE, warning=FALSE}
+model5a_log <- lmer(log ~  change_type + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model5a_log)
+model5b_log <- lmer(log ~  change_type + likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model5b_log)
+anova(model5a_log,model5b_log)
+
+model6a_raw <- lmer(detection_rt ~  change_type + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model6a_raw)
+model6b_raw <- lmer(detection_rt ~  change_type + likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all, REML=FALSE)
+summary(model6b_raw)
+anova(model6a_raw,model6b_raw)
+```
+
+Conclusion: Change blindness duration is better predicted by the size of the change, the eccentricity of the change, and the type of the change when accounting for likelihood ratings.
+
+## Predicting self vs. other.
+
+<!-- ## Correlation between subject's change detection RT and meta-awareness likelihood rating. -->
+
+<!-- ```{r warning=FALSE} -->
+<!-- func1 <- function(tbl_all) -->
+<!-- { -->
+<!-- return(data.frame(corr_indiv = cor(tbl_all$log, tbl_all$likelihood_rating))) -->
+<!-- } -->
+
+<!-- tbl_corr_indiv <- ddply(tbl_all, .(workerId), func1) -->
+<!-- tbl_corr_indiv$fisherZ_indiv <- .5*((log(1+tbl_corr_indiv$corr_indiv)) - (log(1-tbl_corr_indiv$corr_indiv))) -->
+
+<!-- tbl_corr_indiv_no_NAs <- na.omit(tbl_corr_indiv) -->
+<!-- ``` -->
+
+<!-- ## Correlation between subject's meta-awareness likelihood rating and group average change detection RT (without subject). -->
+
+<!-- ```{r include = FALSE} -->
+<!-- workerIds <- unique(tbl_all$workerId) -->
+
+<!-- datalist = list() -->
+
+<!-- for (i in 1:length(workerIds)){ -->
+<!--     df1 <- tbl_all[tbl_all$workerId==workerIds[i],] -->
+<!--     image <- df1$image -->
+<!--     image <- data.frame(image) -->
+<!--     rts <- tbl_all %>% -->
+<!--       filter(workerId != workerIds[i]) -->
+<!--     rts <- rts[(rts$image %in% image$image),] -->
+<!--     rts <- rts %>% -->
+<!--       group_by(image) %>% -->
+<!--       dplyr::summarize(mean_detection_rt = mean(log)) -->
+<!--     datalist[[i]] <- left_join(df1, rts, by = "image") -->
+<!-- } -->
+
+<!-- df2 = do.call(rbind, datalist) -->
+<!-- df2_no_NAs <- na.omit(df2) -->
+
+<!-- func2 <- function(df2_no_NAs) -->
+<!-- { -->
+<!-- return(data.frame(corr_group = cor(df2_no_NAs$mean_detection_rt, df2_no_NAs$likelihood_rating))) -->
+<!-- } -->
+
+<!-- tbl_corr_group <- ddply(df2_no_NAs, .(workerId), func2) -->
+<!-- tbl_corr_group$fisherZ_group <- .5*((log(1+tbl_corr_group$corr_group)) - (log(1-tbl_corr_group$corr_group))) -->
+
+<!-- tbl_corr_group_no_NAs <- na.omit(tbl_corr_group) -->
+<!-- ``` -->
+
+<!-- ## Compare means. -->
+
+<!-- ```{r} -->
+<!-- tbl_predict <- left_join(tbl_corr_indiv_no_NAs, tbl_corr_group_no_NAs, by = "workerId") -->
+<!-- ``` -->
+
+<!-- ## Correlations. -->
+
+<!-- ### Non-transformed Correlations. -->
+
+<!-- ```{r} -->
+<!-- tbl_predict_corrs <- tbl_predict[, -c(3,5)] -->
+
+<!-- tbl_predict_corrs  <- tbl_predict_corrs  %>% -->
+<!--   gather(key = "predicting", value = "corr", corr_indiv, corr_group) -->
+
+<!-- tbl_predict_corrs %>% -->
+<!--   group_by(predicting) %>% -->
+<!--   get_summary_stats(corr, type = "mean_se") -->
+
+<!-- tbl_predict_corrs %>% -->
+<!--   filter(workerId != "A372725XPFZ48Q") %>% -->
+<!--   with(t.test(corr~predicting,paired=TRUE)) -->
+<!-- ``` -->
+
+<!-- ### FisherZ-transformed correlations. -->
+
+<!-- ```{r} -->
+<!-- tbl_predict_fisherZ <- tbl_predict[, -c(2,4)] -->
+
+<!-- tbl_predict_fisherZ <- tbl_predict_fisherZ %>%  -->
+<!--     filter(workerId != "A372725XPFZ48Q") -->
+
+<!-- indiv_ttest <-t.test(tbl_predict_fisherZ$fisherZ_indiv, mu = 0) -->
+<!-- indiv_ttest -->
+
+<!-- group_ttest <-t.test(tbl_predict_fisherZ$fisherZ_group, mu = 0) -->
+<!-- group_ttest -->
+
+<!-- tbl_predict_fisherZ <- tbl_predict_fisherZ %>% -->
+<!--   gather(key = "predicting", value = "fisherZ", fisherZ_indiv, fisherZ_group) -->
+
+<!-- tbl_predict_fisherZ %>% -->
+<!--   group_by(predicting) %>% -->
+<!--   get_summary_stats(fisherZ, type = "mean_sd") -->
+
+<!-- tbl_predict_fisherZ %>% -->
+<!--   with(t.test(fisherZ~predicting,paired=TRUE)) -->
+
+<!-- tbl_predict_fisherZ %>% -->
+<!--   ggbarplot("predicting", "fisherZ", add = "mean_se",fill = "predicting", color = "predicting", palette = c("#0d2240", "#00a8e1"), ylab = "Average correlation", ylim = c(-0.3,0)) + theme(legend.position = "none") + scale_x_discrete(position = "top", labels=c("Individual", "Group")) + rremove("xlab") -->
+<!-- #ggsave("bar1.jpg") -->
+<!-- ``` -->
+
+<!-- # Deviation analysis. -->
+
+<!-- ``` {r} -->
+<!-- df2$deviation <- df2$mean_detection_rt - df2$log -->
+
+<!-- fit_log4 <- lmer(deviation ~ likelihood_rating + (1 | workerId) + (1 | image) + (1 | stim_set), data=df2) -->
+<!-- summary(fit_log4) -->
+<!-- ci(fit_log4) -->
+<!-- ``` -->
+
+### Read in data files.
+
+```{r message=FALSE, warning=FALSE}
+tbl_all_mod <- tbl_all[, -c(8,9,10,11,12,13,14,16,17,19,20,21,22,23,24)]
+names(tbl_all_mod)[4] <- "raw_CB_duration"
+names(tbl_all_mod)[11] <- "log_CB_duration"
+tbl_all_mod$group = "return"
+
+tbl_all_raw_avg <- tbl_all_mod %>% 
+  group_by(workerId,image) %>%
+  dplyr::summarize(raw_CB_duration = mean(raw_CB_duration)) %>%
+  spread(image,raw_CB_duration) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(tbl_all_raw_avg$subj_avg)
+
+tbl_all_raw_avg <- data.frame(raw_CB_duration = colMeans(tbl_all_raw_avg[,2:481], na.rm = TRUE))
+tbl_all_raw_avg <- tibble::rownames_to_column(tbl_all_raw_avg, "image")
+#tbl_all_raw_avg
+
+tbl_all_log_avg <- tbl_all_mod %>% 
+  group_by(workerId,image) %>%
+  dplyr::summarize(log_CB_duration = mean(log_CB_duration)) %>%
+  spread(image,log_CB_duration) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(tbl_all_log_avg$subj_avg)
+
+tbl_all_log_avg <- data.frame(log_CB_duration = colMeans(tbl_all_log_avg[,2:481], na.rm = TRUE))
+tbl_all_log_avg <- tibble::rownames_to_column(tbl_all_log_avg, "image")
+#tbl_all_log_avg
+
+return_likelihood_avg <- tbl_all_mod %>% 
+  group_by(workerId,image) %>%
+  dplyr::summarize(likelihood_rating = mean(likelihood_rating)) %>%
+  spread(image,likelihood_rating) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(return_likelihood_avg$subj_avg)
+
+return_likelihood_avg <- data.frame(likelihood_rating = colMeans(return_likelihood_avg[,2:481], na.rm = TRUE))
+return_likelihood_avg <- tibble::rownames_to_column(return_likelihood_avg, "image")
+return_likelihood_avg$group = "Original"
+#return_likelihood_avg
+
+return <- left_join(tbl_all_log_avg, return_likelihood_avg, by = "image")
+
+corr2 <- cor.test(return$log_CB_duration, return$likelihood_rating, method = c("pearson"))
+corr2
+
+rensink_new <- list.files(path = "./Rensink_New", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(rensink_new %>% distinct(workerId,.keep_all = FALSE))
+rensink_new <- rensink_new %>% 
+  group_by(workerId) %>% 
+  filter(any(Airplane_resp.keys >= 4) & any(Boat_resp.keys >= 4) & any(Cow_resp.keys >= 4) & any(Garden_resp.keys <= 3))
+nrow(rensink_new %>% distinct(workerId,.keep_all = FALSE))
+rensink_new = subset(rensink_new, select = c(user_resp.keys,user_resp.rt,workerId,image_a))
+col_idx <- grep("workerId", names(rensink_new))
+rensink_new <- rensink_new[, c(col_idx, (1:ncol(rensink_new))[-col_idx])]
+rensink_new <- data.frame(na.omit(rensink_new))
+rensink_new <- rensink_new %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+rensink_new$image <- lapply(rensink_new$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+rensink_new <- rensink_new %>%  
+    mutate(image = as.character(image))
+
+ma_new <- list.files(path = "./Ma_New", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(ma_new %>% distinct(workerId,.keep_all = FALSE))
+ma_new <- ma_new %>% 
+  group_by(workerId) %>% 
+  filter(any(Airplane_resp.keys >= 4) & any(Boat_resp.keys >= 4) & any(Cow_resp.keys >= 4) & any(Garden_resp.keys <= 3))
+nrow(ma_new %>% distinct(workerId,.keep_all = FALSE))
+ma_new = subset(ma_new, select = c(user_resp.keys,user_resp.rt,workerId,image_a))
+col_idx <- grep("workerId", names(ma_new))
+ma_new <- ma_new[, c(col_idx, (1:ncol(ma_new))[-col_idx])]
+ma_new <- data.frame(na.omit(ma_new))
+ma_new <- ma_new %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+ma_new$image <- lapply(ma_new$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+ma_new <- ma_new %>%  
+    mutate(image = as.character(image))
+
+wolfe1_new <- list.files(path = "./Wolfe1_New", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(wolfe1_new %>% distinct(workerId,.keep_all = FALSE))
+wolfe1_new <- wolfe1_new %>% 
+  group_by(workerId) %>% 
+  filter(any(Airplane_resp.keys >= 4) & any(Boat_resp.keys >= 4) & any(Cow_resp.keys >= 4) & any(Garden_resp.keys <= 3))
+nrow(wolfe1_new %>% distinct(workerId,.keep_all = FALSE))
+wolfe1_new = subset(wolfe1_new, select = c(user_resp.keys,user_resp.rt,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe1_new))
+wolfe1_new <- wolfe1_new[, c(col_idx, (1:ncol(wolfe1_new))[-col_idx])]
+wolfe1_new <- data.frame(na.omit(wolfe1_new))
+wolfe1_new <- wolfe1_new %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])")
+wolfe1_new$image <- lapply(wolfe1_new$image, gsub, pattern='-a', replacement='')
+wolfe1_new <- wolfe1_new %>%  
+    mutate(image = as.character(image))
+wolfe1_new$database = "wolfe1"
+
+wolfe2_new <- list.files(path = "./Wolfe2_New", pattern = "*.csv", full.names = T, ignore.case = F) %>%
+  map_df(~read.csv(., colClasses=c("gender..m.f."="character", "a"="character", "tp_a"="character")))
+nrow(wolfe2_new %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_new <- wolfe2_new %>% 
+  group_by(workerId) %>% 
+  filter(any(Airplane_resp.keys >= 4) & any(Boat_resp.keys >= 4) & any(Cow_resp.keys >= 4) & any(Garden_resp.keys <= 3))
+nrow(wolfe2_new %>% distinct(workerId,.keep_all = FALSE))
+wolfe2_new = subset(wolfe2_new, select = c(user_resp.keys,user_resp.rt,workerId,image_a))
+col_idx <- grep("workerId", names(wolfe2_new))
+wolfe2_new <- wolfe2_new[, c(col_idx, (1:ncol(wolfe2_new))[-col_idx])]
+wolfe2_new <- data.frame(na.omit(wolfe2_new))
+wolfe2_new <- wolfe2_new %>%
+separate(image_a,into=c('database', 'image'), sep = "([\\_])", extra = "merge")
+wolfe2_new$image <- lapply(wolfe2_new$image, gsub, pattern='-a_w_outline.jpg', replacement='')
+wolfe2_new <- wolfe2_new %>%  
+    mutate(image = as.character(image))
+wolfe2_new$database = "wolfe2"
+
+new_ratings <- rbind(rensink_new, ma_new, wolfe1_new, wolfe2_new)
+names(new_ratings)[2] <- "likelihood_rating"
+names(new_ratings)[3] <- "likelihood_rt"
+names(new_ratings)[4] <- "stim_set"
+
+new_ratings <- left_join(new_ratings, tbl_all_log_avg, by = "image")
+new_ratings <- left_join(new_ratings, tbl_all_raw_avg, by = "image")
+
+#new_subj_avg <- new_ratings %>%
+#  group_by(workerId,image) %>%
+#  dplyr::summarize(average = mean(likelihood_rating)) %>%
+#  spread(image,average) %>% 
+#  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+#mean(new_subj_avg$subj_avg)
+
+#new_img_avg <- data.frame(new_img_avg = colMeans(new_subj_avg[,2:483], na.rm = TRUE))
+#new_img_avg <- tibble::rownames_to_column(new_img_avg, "image")
+
+new_ratings_mod <- left_join(new_ratings, Box_and_change_info, by = "image")
+new_ratings_mod <- new_ratings_mod[, -c(8,9,10,11,12,13,14,16,17,19,20,21,22,23,24)]
+
+new_likelihood_avg <- new_ratings_mod %>% 
+  group_by(workerId,image) %>%
+  dplyr::summarize(likelihood_rating = mean(likelihood_rating)) %>%
+  spread(image,likelihood_rating) %>% 
+  mutate(subj_avg = rowMeans(.[-1], na.rm = TRUE))
+mean(new_likelihood_avg$subj_avg)
+
+new_likelihood_avg <- data.frame(likelihood_rating = colMeans(new_likelihood_avg[,2:483], na.rm = TRUE))
+new_likelihood_avg <- tibble::rownames_to_column(new_likelihood_avg, "image")
+new_likelihood_avg$group = "New"
+#new_likelihood_avg
+
+new <- left_join(tbl_all_log_avg, new_likelihood_avg, by = "image")
+
+corr3 <- cor.test(new$log_CB_duration, new$likelihood_rating, method = c("pearson"))
+corr3
+
+return_new_comparison <- rbind.fill(new, return)
+
+all_change_type<- read_csv("All_change_type.csv", col_types = cols())
+new_ratings_mod <- left_join(new_ratings_mod, all_change_type, by = "image")
+new_ratings_mod$group = "new"
+
+return_new <- rbind.fill(tbl_all_mod, new_ratings_mod)
+write.csv(return_new, "return_new_data.csv", row.names=FALSE)
+
+nrow(return_new %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Analyze and plot.
+
+```{r message=FALSE, warning=FALSE}
+#new_avg <- return_new %>%
+#  filter(group == "new") %>%
+#  group_by(image) %>%
+#  summarise_at(vars(likelihood_rating), funs(mean(., na.rm=TRUE)))
+#names(new_avg)[2] <- "new_avg_likelihood_rating"
+
+#return_new <- return_new %>% 
+#  filter (group == "return")
+#return_new <- left_join(return_new, new_avg, by = "image")
+
+#fit_return_new_log <- lmer(log_CB_duration ~ likelihood_rating + new_avg_likelihood_rating + (1|workerId) + (1|image) + (1|stim_set), #data=return_new)
+#summary(fit_return_new_log)
+#ci(fit_return_new_log)
+
+#fit_return_new_raw <- lmer(raw_CB_duration ~ likelihood_rating + new_avg_likelihood_rating + (1|workerId) + (1|image) + (1|stim_set), #data=return_new)
+#summary(fit_return_new_raw)
+#ci(fit_return_new_raw)
+
+fit <- lmer(log_CB_duration ~ likelihood_rating + group + (1|workerId) + (1|image) + (1|stim_set), data=return_new)
+summary(fit)
+ci(fit)
+
+#return_new_corr <- return_new %>% 
+#  group_by(image,group) %>% 
+#  dplyr::summarize(likelihood_rating = mean(likelihood_rating), new_avg_likelihood_rating = mean(new_avg_likelihood_rating))
+
+return_new_comparison %>% 
+  ggscatter(y = "log_CB_duration", x = "likelihood_rating", color = "group", ylab = "Log Change Detection RT (sec)", xlab = "Likelihood of Detecting Change", palette = c("#0d2240", "#00a8e1", "#f7a800", "#dfdddc", "#E31818", "#0d2240"), add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(0.75, 1.4)) + stat_cor(aes(color = group), label.x = 4, label.y = c(1.4, 1.3), method = "pearson")
+
+return_new_comparison %>% 
+  ggscatter(y = "log_CB_duration", x = "likelihood_rating", color = "group", ylab = "Log Change Detection RT (sec)", xlab = "Likelihood of Detecting Change", palette = c("#0d2240", "#00a8e1", "#f7a800", "#dfdddc", "#E31818", "#0d2240"), add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(0.75, 1.4)) + theme(legend.title=element_blank())
+ggsave("fig_19_return_new.jpg")
+
+return_new_corr <- return_new %>% 
+  group_by(image,group) %>% 
+  dplyr::summarize(likelihood_rating = mean(likelihood_rating)) %>%
+  spread(group,likelihood_rating) 
+
+return_new_corr %>%
+  ggscatter(y = "return", x = "new", ylab = "Returning Subject Rating", xlab = "New Subject Rating", add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(1, 5)) + stat_cor(method = "pearson", label.x = 1, label.y = 5)
+
+return_new_corr %>%
+  ggscatter(y = "return", x = "new", ylab = "Own Subject Rating", xlab = "Other Subject Rating", add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(1, 5))
+ggsave("fig_18_return_new.jpg")
+```
+
+## Semantic analyses.
+
+### Summary of descriptions.
+
+```{r message=FALSE, warning=FALSE}
+rensink_semantic_final_descriptions_count <- read_csv("rensink_semantic_final_descriptions_count.csv")
+ma_semantic_final_descriptions_count <- read_csv("ma_semantic_final_descriptions_count.csv")
+wolfe1_semantic_final_descriptions_count <- read_csv("wolfe1_semantic_final_descriptions_count.csv")
+wolfe2_semantic_final_descriptions_count <- read_csv("wolfe2_semantic_final_descriptions_count.csv")
+
+descriptions <- rbind(rensink_semantic_final_descriptions_count, ma_semantic_final_descriptions_count, wolfe1_semantic_final_descriptions_count, wolfe2_semantic_final_descriptions_count)
+
+# This is the average number of descriptions for all 480 image pairs.
+mean(descriptions$count)
+
+# This is a frequency distrubtion of the number of descriptions for all 480 image pairs. For example, 1 image pair had 3 descriptions, 166 image pairs had 4 descriptions, etc.
+descriptions_frequency_all <- data.frame(table(descriptions$count))
+colnames(descriptions_frequency_all) <- c("count", "frequency")
+descriptions_frequency_all 
+
+# This is the average number of descriptions for image pairs in each stimulus set.
+descriptions_average <- descriptions %>%
+  group_by(stim_set) %>%
+  dplyr::summarize(average = mean(count)) %>%
+  spread(stim_set,average)
+descriptions_average 
+
+# This is a frequency distrubtion of the number of descriptions for the Ma stimuli.
+descriptions_ma <- descriptions %>% 
+  filter(stim_set == "ma")
+descriptions_ma <- data.frame(table(descriptions_ma$count))
+colnames(descriptions_ma) <- c("count", "frequency")
+descriptions_ma 
+
+# This is a frequency distrubtion of the number of descriptions for the Rensink stimuli.
+descriptions_rensink <- descriptions %>% 
+  filter(stim_set == "rensink")
+descriptions_rensink <- data.frame(table(descriptions_rensink$count))
+colnames(descriptions_rensink) <- c("count", "frequency")
+descriptions_rensink 
+
+# This is a frequency distrubtion of the number of descriptions for the Wolfe1 stimuli.
+descriptions_wolfe1 <- descriptions %>% 
+  filter(stim_set == "wolfe1")
+descriptions_wolfe1 <- data.frame(table(descriptions_wolfe1$count))
+colnames(descriptions_wolfe1) <- c("count", "frequency")
+descriptions_wolfe1 
+
+# This is a frequency distrubtion of the number of descriptions for the Wolfe2 stimuli.
+descriptions_wolfe2 <- descriptions %>% 
+  filter(stim_set == "wolfe2")
+descriptions_wolfe2 <- data.frame(table(descriptions_wolfe2$count))
+colnames(descriptions_wolfe2) <- c("count", "frequency")
+descriptions_wolfe2 
+```
+
+### Summary of similarity ratings.
+
+```{r message=FALSE, warning=FALSE}
+rensink_similarity_descriptions_count <- read_csv("rensink_similarity_descriptions_count.csv")
+ma_similarity_descriptions_count <- read_csv("ma_similarity_descriptions_count.csv")
+wolfe1_similarity_descriptions_count <- read_csv("wolfe1_similarity_descriptions_count.csv")
+wolfe2_similarity_descriptions_count <- read_csv("wolfe2_similarity_descriptions_count.csv")
+
+similarity <- rbind(rensink_similarity_descriptions_count, ma_similarity_descriptions_count, wolfe1_similarity_descriptions_count, wolfe2_similarity_descriptions_count)
+
+# This is the average number of ratings for all 2691 descriptions.
+mean(similarity$count)
+
+# This is a frequency distrubtion of the number of ratings for all 2691 descriptions. For example, 1347 descriptions had 3 ratings, 762 descriptions had 4 ratings, etc.
+similarity_frequency_all <- data.frame(table(similarity$count))
+colnames(similarity_frequency_all) <- c("count", "frequency")
+similarity_frequency_all
+
+# This is the average number of ratings for descriptions in each stimulus set. For example, every description in the Ma sitmulus set was rated an average of 4.42 times.
+similarity_average <- similarity %>%
+  group_by(stim_set) %>%
+  dplyr::summarize(average = mean(count)) %>%
+  spread(stim_set,average)
+similarity_average
+
+# This is a frequency distrubtion of the number of ratings for the Ma descriptions.
+similarity_ma <- similarity %>% 
+  filter(stim_set == "ma")
+similarity_ma <- data.frame(table(similarity_ma$count))
+colnames(similarity_ma) <- c("count", "frequency")
+similarity_ma
+
+# This is a frequency distrubtion of the number of ratings for the Rensink descriptions.
+similarity_rensink <- similarity %>% 
+  filter(stim_set == "rensink")
+similarity_rensink <- data.frame(table(similarity_rensink$count))
+colnames(similarity_rensink) <- c("count", "frequency")
+similarity_rensink
+
+# This is a frequency distrubtion of the number of ratings for the Wolfe1 descriptions.
+similarity_wolfe1 <- similarity %>% 
+  filter(stim_set == "wolfe1")
+similarity_wolfe1 <- data.frame(table(similarity_wolfe1$count))
+colnames(similarity_wolfe1) <- c("count", "frequency")
+similarity_wolfe1
+
+# This is a frequency distrubtion of the number of ratings for the Wolfe2 descriptions.
+similarity_wolfe2 <- similarity %>% 
+  filter(stim_set == "wolfe2")
+similarity_wolfe2 <- data.frame(table(similarity_wolfe2$count))
+colnames(similarity_wolfe2) <- c("count", "frequency")
+similarity_wolfe2
+```
+
+### Read in data.
+
+```{r message=FALSE, warning=FALSE}
+rensink_semantic_similarity_rating <- read_csv("rensink_semantic_similarity_rating.csv")
+ma_semantic_similarity_rating <- read_csv("ma_semantic_similarity_rating.csv")
+wolfe1_semantic_similarity_rating <- read_csv("wolfe1_semantic_similarity_rating.csv")
+wolfe2_semantic_similarity_rating <- read_csv("wolfe2_semantic_similarity_rating.csv")
+
+similarity_ratings <- rbind(rensink_semantic_similarity_rating, ma_semantic_similarity_rating, wolfe1_semantic_similarity_rating, wolfe2_semantic_similarity_rating)
+
+tbl_all_2.0 <- left_join(return_new, similarity_ratings, by = "image")
+```
+
+### Analyze semantic similarity ratings.
+
+fit_log4 = Does semantic similarity predict log change blindness duration for returning subjects? A: No
+fit_log5 = Does semantic similarity predict likelihood rating for returning subjects? A: Yes
+fit_log6 = Does semantic similarity predict log change blindness duration for new subjects? A: No
+fit_log7 = Does semantic similarity predict likelihood rating for new subjects? A: Yes
+
+```{r message=FALSE, warning=FALSE}
+tbl_all_2.0_return <- tbl_all_2.0 %>% 
+  filter(group == "return")
+
+fit_log4 <- lmer(log_CB_duration ~ semantic_similarity + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all_2.0_return)
+summary(fit_log4)
+ci(fit_log4)
+
+fit_log5 <- lmer(likelihood_rating ~ semantic_similarity + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all_2.0_return)
+summary(fit_log5)
+ci(fit_log5)
+
+fit_log6 <- lmer(log_CB_duration ~ likelihood_rating + semantic_similarity + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all_2.0_return)
+summary(fit_log6)
+ci(fit_log6)
+
+corr_2.0 <- tbl_all_2.0_return %>% 
+  group_by(image) %>% 
+  dplyr::summarize(log = mean(log_CB_duration), raw = mean(raw_CB_duration), likelihood_rating = mean(likelihood_rating), change_type = unique(change_type), eccentricity = mean(eccentricity), box_percent = mean(box_percent), change_percent = mean(change_percent), similarity = mean(semantic_similarity))
+
+corr_2.0 %>%
+  ggscatter(y = "similarity", x = "likelihood_rating", ylab = "Average Semantic Similarity", xlab = "Likelihood of Detecting Change", add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(2, 6))
+ggsave("fig_19_likelihood_predict_log.jpg")
+
+tbl_all_2.0_new <- tbl_all_2.0 %>% 
+  filter(group == "new")
+
+fit_log7 <- lmer(log_CB_duration ~ semantic_similarity + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all_2.0_new)
+summary(fit_log7)
+ci(fit_log7)
+
+fit_log8 <- lmer(likelihood_rating ~ semantic_similarity + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all_2.0_new)
+summary(fit_log8)
+ci(fit_log8)
+
+fit_log9 <- lmer(log_CB_duration ~ likelihood_rating + semantic_similarity + (1 | workerId) + (1 | image) + (1 | stim_set), data=tbl_all_2.0_new)
+summary(fit_log9)
+ci(fit_log9)
+
+corr_3.0 <- tbl_all_2.0_new %>% 
+  group_by(image) %>% 
+  dplyr::summarize(log = mean(log_CB_duration), raw = mean(raw_CB_duration), likelihood_rating = mean(likelihood_rating), change_type = unique(change_type), eccentricity = mean(eccentricity), box_percent = mean(box_percent), change_percent = mean(change_percent), similarity = mean(semantic_similarity))
+
+corr_3.0 %>%
+  ggscatter(y = "similarity", x = "likelihood_rating", ylab = "Average Semantic Similarity", xlab = "Likelihood of Detecting Change", add = "reg.line", conf.int = TRUE, xlim = c(1, 5), ylim = c(2, 6))
+ggsave("fig_20_likelihood_predict_log.jpg")
+```

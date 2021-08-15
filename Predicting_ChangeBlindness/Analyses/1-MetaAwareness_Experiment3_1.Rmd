@@ -1,0 +1,413 @@
+---
+title: "MetaAwarness - Experiment 3 - Task 1"
+author: "Adam Barnas"
+date: "Last compiled at `r format(Sys.time(), '%l:%M %p')` on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up R environment.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(magick)
+library(png)
+library(lme4)
+library(lmerTest)
+library(irrNA)
+library(psy)
+library(coefficientalpha)
+library(parameters)
+library(dplyr)
+```
+
+# Written descriptions of changes.
+
+## Rensink.
+
+### Read-in datafiles.
+
+```{r}
+rensink_semantic_round_1 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Rensink/Descriptions/rensink_semantic_round_1.csv", col_types = cols())
+rensink_semantic_round_2 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Rensink/Descriptions/rensink_semantic_round_2.csv", col_types = cols())
+rensink_semantic_round_3 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Rensink/Descriptions/rensink_semantic_round_3.csv", col_types = cols())
+
+rensink_semantic_all<- rbind(rensink_semantic_round_1, rensink_semantic_round_2, rensink_semantic_round_3)
+rensink_semantic_all <- rensink_semantic_all %>% 
+  filter(image != 'airplane' & image != 'cow')
+```
+
+Count subjects.
+
+```{r}
+nrow(rensink_semantic_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Get initial count of descriptions for each image.
+
+``` {r}
+rensink_semantic_all_count <- rensink_semantic_all %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+rensink_semantic_all_count <- data.frame(count = colSums(rensink_semantic_all_count[,2:49], na.rm = TRUE))
+rensink_semantic_all_count <- tibble::rownames_to_column(rensink_semantic_all_count, "image")
+rensink_semantic_all_count
+```
+
+### Filter good subjects.
+
+```{r message=FALSE}
+rensink_semantic_good <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Rensink_Semantic_good.csv")
+rensink_semantic_final_descriptions <- rensink_semantic_all %>% 
+      filter(rensink_semantic_all$workerId %in% rensink_semantic_good$workerId)
+```
+
+Count good subjects
+
+```{r}
+nrow(rensink_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Filter and count bad subjects.
+
+```{r}
+rensink_semantic_bad_descriptions <- rensink_semantic_all %>% 
+      filter(!rensink_semantic_all$workerId %in% rensink_semantic_good$workerId)
+nrow(rensink_semantic_bad_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Get final count of descriptions for each image.
+
+```{r}
+rensink_semantic_final_descriptions_count <- rensink_semantic_final_descriptions %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+rensink_semantic_final_descriptions_count <- data.frame(count = colSums(rensink_semantic_final_descriptions_count[,2:49], na.rm = TRUE))
+rensink_semantic_final_descriptions_count <- tibble::rownames_to_column(rensink_semantic_final_descriptions_count, "image")
+rensink_semantic_final_descriptions_count
+rensink_semantic_final_descriptions_count$stim_set <- "rensink"
+```
+
+This is a frequency distrubtion of the number of descriptions.
+
+```{r}
+descriptions_rensink_freq <- data.frame(table(rensink_semantic_final_descriptions_count$count))
+colnames(descriptions_rensink_freq) <- c("count", "frequency")
+descriptions_rensink_freq 
+```
+
+## Ma.
+
+### Read-in datafiles.
+
+```{r}
+ma_semantic_round_1 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Ma/Descriptions/ma_semantic_round_1.csv", col_types = cols())
+ma_semantic_round_2 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Ma/Descriptions/ma_semantic_round_2.csv", col_types = cols())
+ma_semantic_round_3 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Ma/Descriptions/ma_semantic_round_3.csv", col_types = cols())
+
+ma_semantic_all<- rbind(ma_semantic_round_1, ma_semantic_round_2, ma_semantic_round_3)
+ma_semantic_all <- ma_semantic_all %>% 
+  filter(image != 'airplane' & image != 'cow')
+```
+
+Count subjects.
+
+```{r}
+nrow(ma_semantic_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Get initial count of descriptions for each image.
+
+``` {r}
+ma_semantic_all_count <- ma_semantic_all %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+ma_semantic_all_count <- data.frame(count = colSums(ma_semantic_all_count[,2:70], na.rm = TRUE))
+ma_semantic_all_count <- tibble::rownames_to_column(ma_semantic_all_count, "image")
+ma_semantic_all_count
+```
+
+### Filter good subjects.
+
+```{r message=FALSE}
+ma_semantic_good <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Ma_Semantic_good.csv")
+ma_semantic_final_descriptions <- ma_semantic_all %>% 
+      filter(ma_semantic_all$workerId %in% ma_semantic_good$workerId)
+```
+
+Count good subjects
+
+```{r}
+nrow(ma_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Filter and count bad subjects.
+
+```{r}
+ma_semantic_bad_descriptions <- ma_semantic_all %>% 
+      filter(!ma_semantic_all$workerId %in% ma_semantic_good$workerId)
+nrow(ma_semantic_bad_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Get final count of descriptions for each image.
+
+```{r}
+ma_semantic_final_descriptions_count <- ma_semantic_final_descriptions %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+ma_semantic_final_descriptions_count <- data.frame(count = colSums(ma_semantic_final_descriptions_count[,2:70], na.rm = TRUE))
+ma_semantic_final_descriptions_count <- tibble::rownames_to_column(ma_semantic_final_descriptions_count, "image")
+ma_semantic_final_descriptions_count
+ma_semantic_final_descriptions_count$stim_set <- "ma"
+```
+
+This is a frequency distrubtion of the number of descriptions.
+
+```{r}
+descriptions_ma_freq <- data.frame(table(ma_semantic_final_descriptions_count$count))
+colnames(descriptions_ma_freq) <- c("count", "frequency")
+descriptions_ma_freq 
+```
+
+## Wolfe1.
+
+### Read-in datafiles.
+
+```{r}
+wolfe1_semantic_round_1 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe1/Descriptions/wolfe1_semantic_round_1.csv", col_types = cols())
+wolfe1_semantic_round_2 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe1/Descriptions/wolfe1_semantic_round_2.csv", col_types = cols())
+wolfe1_semantic_round_3 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe1/Descriptions/wolfe1_semantic_round_3.csv", col_types = cols())
+wolfe1_semantic_round_4 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe1/Descriptions/wolfe1_semantic_round_4.csv", col_types = cols())
+
+wolfe1_semantic_all<- rbind(wolfe1_semantic_round_1, wolfe1_semantic_round_2, wolfe1_semantic_round_3, wolfe1_semantic_round_4)
+wolfe1_semantic_all <- wolfe1_semantic_all %>% 
+  filter(image != 'airplane' & image != 'cow')
+```
+
+Count subjects.
+
+```{r}
+nrow(wolfe1_semantic_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Get initial count of descriptions for each image.
+
+``` {r}
+wolfe1_semantic_all_count <- wolfe1_semantic_all %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe1_semantic_all_count <- data.frame(count = colSums(wolfe1_semantic_all_count[,2:112], na.rm = TRUE))
+wolfe1_semantic_all_count <- tibble::rownames_to_column(wolfe1_semantic_all_count, "image")
+wolfe1_semantic_all_count
+```
+
+### Filter good subjects.
+
+```{r message=FALSE}
+wolfe1_semantic_good <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Analyses/Wolfe1_Semantic_good.csv")
+wolfe1_semantic_final_descriptions <- wolfe1_semantic_all %>% 
+      filter(wolfe1_semantic_all$workerId %in% wolfe1_semantic_good$workerId)
+```
+
+Count good subjects
+
+```{r}
+nrow(wolfe1_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Filter and count bad subjects.
+
+```{r}
+wolfe1_semantic_bad_descriptions <- wolfe1_semantic_all %>% 
+      filter(!wolfe1_semantic_all$workerId %in% wolfe1_semantic_good$workerId)
+nrow(wolfe1_semantic_bad_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Get final count of descriptions for each image.
+
+```{r}
+wolfe1_semantic_final_descriptions_count <- wolfe1_semantic_final_descriptions %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe1_semantic_final_descriptions_count <- data.frame(count = colSums(wolfe1_semantic_final_descriptions_count[,2:112], na.rm = TRUE))
+wolfe1_semantic_final_descriptions_count <- tibble::rownames_to_column(wolfe1_semantic_final_descriptions_count, "image")
+wolfe1_semantic_final_descriptions_count
+wolfe1_semantic_final_descriptions_count$stim_set <- "wolfe1"
+```
+
+This is a frequency distrubtion of the number of descriptions.
+
+```{r}
+descriptions_wolfe1_freq <- data.frame(table(wolfe1_semantic_final_descriptions_count$count))
+colnames(descriptions_wolfe1_freq) <- c("count", "frequency")
+descriptions_wolfe1_freq 
+```
+
+## Wolfe2.
+
+### Read-in datafiles.
+
+```{r}
+wolfe2_semantic_round_1 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_1.csv", col_types = cols())
+wolfe2_semantic_round_2 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_2.csv", col_types = cols())
+wolfe2_semantic_round_3 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_3.csv", col_types = cols())
+wolfe2_semantic_round_4 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_4.csv", col_types = cols())
+wolfe2_semantic_round_5 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_5.csv", col_types = cols())
+wolfe2_semantic_round_6 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_6.csv", col_types = cols())
+wolfe2_semantic_round_7 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_7.csv", col_types = cols())
+wolfe2_semantic_round_8 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_8.csv", col_types = cols())
+wolfe2_semantic_round_9 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_9.csv", col_types = cols())
+wolfe2_semantic_round_10 <- read_csv("/Volumes/Files/Box/Archive/Predicting_ChangeBlindness/Raw_Data/Wolfe2/Descriptions/wolfe2_semantic_round_10.csv", col_types = cols())
+
+
+wolfe2_semantic_all<- rbind(wolfe2_semantic_round_1, wolfe2_semantic_round_2, wolfe2_semantic_round_3, wolfe2_semantic_round_4, wolfe2_semantic_round_5, wolfe2_semantic_round_6, wolfe2_semantic_round_7, wolfe2_semantic_round_8, wolfe2_semantic_round_9, wolfe2_semantic_round_10)
+wolfe2_semantic_all <- wolfe2_semantic_all %>% 
+  filter(image != 'airplane' & image != 'cow')
+```
+
+Count subjects.
+
+```{r}
+nrow(wolfe2_semantic_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Get initial count of descriptions for each image.
+
+``` {r}
+wolfe2_semantic_all_count <- wolfe2_semantic_all %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe2_semantic_all_count <- data.frame(count = colSums(wolfe2_semantic_all_count[,2:255], na.rm = TRUE))
+wolfe2_semantic_all_count <- tibble::rownames_to_column(wolfe2_semantic_all_count, "image")
+wolfe2_semantic_all_count
+```
+
+### Filter good subjects.
+
+```{r message=FALSE}
+wolfe2_semantic_good <- read_csv("/Volumes/Files/Box/MetaAwareness/data/wolfe2_Semantic_good.csv")
+wolfe2_semantic_final_descriptions <- wolfe2_semantic_all %>% 
+      filter(wolfe2_semantic_all$workerId %in% wolfe2_semantic_good$workerId)
+```
+
+Count good subjects
+
+```{r}
+nrow(wolfe2_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Filter and count bad subjects.
+
+```{r}
+wolfe2_semantic_bad_descriptions <- wolfe2_semantic_all %>% 
+      filter(!wolfe2_semantic_all$workerId %in% wolfe2_semantic_good$workerId)
+nrow(wolfe2_semantic_bad_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+### Get final count of descriptions for each image.
+
+```{r}
+wolfe2_semantic_final_descriptions_count <- wolfe2_semantic_final_descriptions %>% 
+  group_by(workerId,image) %>% 
+  dplyr::summarize(counts = n()) %>%
+  spread(image,counts) %>%
+  mutate(sum = rowSums(.[-1], na.rm = TRUE))
+
+wolfe2_semantic_final_descriptions_count <- data.frame(count = colSums(wolfe2_semantic_final_descriptions_count[,2:255], na.rm = TRUE))
+wolfe2_semantic_final_descriptions_count <- tibble::rownames_to_column(wolfe2_semantic_final_descriptions_count, "image")
+wolfe2_semantic_final_descriptions_count
+wolfe2_semantic_final_descriptions_count$stim_set <- "wolfe2"
+```
+
+This is a frequency distrubtion of the number of descriptions.
+
+```{r}
+descriptions_wolfe2_freq <- data.frame(table(wolfe2_semantic_final_descriptions_count$count))
+colnames(descriptions_wolfe2_freq) <- c("count", "frequency")
+descriptions_wolfe2_freq 
+```
+
+## Combined analyses.
+
+Initial sample size.
+
+```{r}
+nrow(rensink_semantic_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_semantic_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_semantic_all %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_semantic_all %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Number of excluded subjects due to poor descriptions on catch trials.
+
+```{r}
+nrow(rensink_semantic_bad_descriptions %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_semantic_bad_descriptions %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_semantic_bad_descriptions %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_semantic_bad_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+Count good subjects
+
+```{r}
+nrow(rensink_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE)) + nrow(ma_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe1_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE)) + nrow(wolfe2_semantic_final_descriptions %>% distinct(workerId,.keep_all = FALSE))
+```
+
+```{r}
+descriptions <- rbind(rensink_semantic_final_descriptions_count, ma_semantic_final_descriptions_count, wolfe1_semantic_final_descriptions_count, wolfe2_semantic_final_descriptions_count)
+```
+
+This is the average number of descriptions for all 480 image pairs.
+
+```{r}
+mean(descriptions$count)
+sd(descriptions$count)
+range(descriptions$count)
+```
+
+This is a frequency distrubtion of the number of descriptions for all 482 image pairs. For example, 1 image pair had 3 descriptions, 166 image pairs had 4 descriptions, etc.
+
+```{r}
+descriptions_frequency_all <- data.frame(table(descriptions$count))
+colnames(descriptions_frequency_all) <- c("count", "frequency")
+descriptions_frequency_all 
+```
+
+This is the average number of descriptions for image pairs in each stimulus set.
+
+```{r}
+descriptions_average <- descriptions %>%
+  group_by(stim_set) %>%
+  dplyr::summarize(average = mean(count)) %>%
+  spread(stim_set,average)
+descriptions_average 
+```
